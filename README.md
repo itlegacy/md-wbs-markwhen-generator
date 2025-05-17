@@ -1,5 +1,7 @@
 # MD-WBS to Markwhen Generator (md-wbs-markwhen-generator)
 
+Markmap形式に対応した独自のWBS書式（MD-WBS）のWBSをMarkwhen(.mw)に変換するPowerShellスクリプト
+
 ## 1. 概要
 
 `md-wbs-markwhen-generator` は、特定のMarkdown形式で記述されたWBS（作業分解構成図）ファイルと祝日リストCSVから、[Markwhen](https://markwhen.com/) 形式のタイムラインデータを生成するPowerShellスクリプトです。
