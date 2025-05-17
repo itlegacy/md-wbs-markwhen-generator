@@ -1,0 +1,13 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# PowerShell generated files (if any specific to local environment)
+# *.ps1xml
+
+# User generated output (if users generate outputs in the project root or specific dirs not meant for commit)
+# /samples/generated_gantt_examples/* # サンプルとして提供するものはコミットするが、ユーザーが試して作ったものはコミットさせない場合など
+my_project_gantt.md # 個人的なテスト出力など
+
+# VS Code specific
+.vscode/

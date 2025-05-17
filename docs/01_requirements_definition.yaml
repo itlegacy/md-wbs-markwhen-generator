@@ -1,0 +1,201 @@
+# 要件定義書: プロジェクト管理ツール (WBS・ガントチャート) - 最終仕様案
+
+project_overview:
+  project_name: "ローカル環境向けプロジェクト管理手法の確立 (Markwhen特化・ID見出し化)"
+  objective: "社外秘情報を取り扱い可能なローカル環境にて、階層ID付き見出しと属性リストを用いたMD-WBSと、Markwhenの機能を活用した表現力豊かなガントチャート（タイムライン）を実現するプロジェクト管理手法を確立する。"
+  scope: "VS Codeを中心としたツール・拡張機能の組み合わせ、及びPowerShellスクリプトによるデータ連携を前提とした実現方法の検討と要件定義、及び基本仕様の策定。"
+  target_date_of_this_document: "2025-05-16" # 本日時点
+
+system_requirements:
+  general:
+    - "SaaS (Software as a Service) は選択肢から除外する。"
+    - "Microsoft Project を含む、ライセンス購入が必要な市販パッケージ製品は選択肢から除外する。"
+    - "全てのデータ処理と保存はローカル環境で完結すること（社外秘情報取扱いのため）。"
+  preferred_environment:
+    - "Microsoft Visual Studio Code (VS Code) の利用を強く推奨する。"
+    - "VS Code の機能拡張を積極的に活用する (例: Markmap用、Markwhen用)。"
+  scripting_language:
+    - "PowerShell (バージョン 7.0 以上を推奨、YAML解析には7.3+が望ましい) をデータ連携および主要な自動処理に用いる。"
+  data_integration:
+    - "PowerShellスクリプトによるMD-WBSのパースとMarkwhen形式への変換を行う。"
+  programming_language_constraints:
+    - "Python の利用は補助的に可能とする。"
+    - "Python のパッケージインストーラ（Anaconda, pip 等）はセキュリティ上の理由により利用不可とする。標準ライブラリまたは手動配置可能なライブラリのみ利用可。"
+
+functional_requirements:
+  project_metadata_header:
+    description: "MD-WBSファイルの先頭にプロジェクト全体のメタ情報を記述する。"
+    format: "YAMLフロントマター形式 (--- で囲まれたYAMLブロック)。"
+    elements:
+      - key: "title"
+        type: "string"
+        description: "プロジェクトの公式名称。"
+        example: "title: ServiceDev 新サービス開発プロジェクト (v6 - 矛盾解消＆テスト)"
+      - key: "description"
+        type: "string"
+        description: "プロジェクトの簡単な説明（任意）。"
+        example: "description: 次世代向け新サービスの開発プロジェクト。MD-WBS新仕様、矛盾解消、および依存関係テストケースを含む。"
+      - key: "date"
+        type: "date (YYYY-MM-DD)"
+        description: "プロジェクト定義日やドキュメント作成日など、任意の参照日。"
+        example: "date: 2025-05-16"
+      - key: "projectstartdate" # キー名を小文字に統一推奨 (YAMLパーサーの挙動による)
+        type: "date (YYYY-MM-DD)"
+        description: "プロジェクトの計画開始日（任意、Markwhen表示や祝日フィルタの目安）。"
+        example: "projectstartdate: 2025-06-01"
+      - key: "projectoveralldeadline" # キー名を小文字に統一推奨
+        type: "date (YYYY-MM-DD)"
+        description: "プロジェクト全体の最終締切日（任意、Markwhen表示や祝日フィルタの目安）。"
+        example: "projectoveralldeadline: 2026-04-15"
+      - key: "view"
+        type: "string"
+        description: "Markwhenのデフォルト表示ビュー（例: month, week, day）（任意）。"
+        example: "view: month"
+    handling: "PowerShellスクリプトは、このメタ情報を読み取り、Markwhenのフロントマターディレクティブ等に反映する。`ConvertFrom-Yaml`が利用できない場合は簡易的なキーバリューパースで対応する。"
+
+  wbs_management:
+    description: "作業分解構成図 (WBS) の効果的な管理とMarkwhenへのマッピング。"
+    data_format_details:
+      format_name: "ID-Prefixed Heading MD-WBS with Listed Attributes"
+      file_extension: ".md"
+      general_formatting_rules:
+        - "属性や子要素のリストブロックを記述する際は、そのブロックの前後に空行を入れることを推奨する（可読性のため）。"
+      hierarchy_representation:
+        - method: |
+            Markdownの見出しレベル (`##`, `###`, `####`, `#####` ...) で、WBSのすべての構成要素（セクション、グループ、タスク、サブタスク）の階層構造を定義する。
+            各見出しの先頭には、階層的なID (例: `1.`, `1.1.`, `1.1.1.`) を記述し、半角スペースを挟んで要素名を続ける。
+            例: `## 1. セクションA`, `### 1.1. グループB`, `#### 1.1.1. タスクC`
+        - id_as_identifier: "見出し先頭に記述された階層的IDが、そのWBS要素の一意な識別子となる。"
+        - mapping_to_markwhen: |
+            PowerShellスクリプトは、この見出し階層を解析する。
+            - 見出しレベル2 (`## ID. 名称`) はMarkwhenの `section 名称` と `endsection` に変換される。
+            - 見出しレベル3 (`### ID. 名称`) はMarkwhenの `group "名称"` と `endgroup` に変換される。
+            - 見出しレベル4以上 (`#### ID. 名称` など) は、子要素を持たない場合はMarkwhenのタイムラインエントリ (タスク) に、子要素を持つ場合はネストされた `group "名称"` と `endgroup` およびその内部に「概要」タスク行を生成し、さらに子要素を処理する。
+            - Markwhenのインデント規則（例: スペース4つ単位）に厳密に従って、ネスト構造とタスク行のインデントを正確に制御する。
+      element_attributes_definition:
+        description: "各WBS要素（Markdown見出し）の属性は、その見出し行の直下に続く、1段インデントされたMarkdownリストアイテムとして定義する。"
+        list_indentation_rule: "属性リストは、親となる見出しより1段インデントして記述することを必須とする (例: スペース4つでインデント)。"
+        item_format: "各属性は `- キーワード: 値` の形式。キーワードの末尾にはコロン `:` を付ける。値の `#` 以降はコメントとして扱い、パース時に除去する。"
+        allowed_keywords:
+          - "deadline"
+          - "duration"    # タスク要素以外では通常指定不要または0d
+          - "status"
+          - "progress"    # タスク要素以外では通常指定不要
+          - "assignee"
+          - "depends"     # 値は先行タスクの階層的ID (例: 1.1.1)。末尾のドットはパース時に除去。単一依存を推奨。
+        description_handling:
+          "要素の詳細な説明は、属性リストではなく、見出しの直後のMarkdown本文（通常の段落）として記述することを推奨する。スクリプトはこれをMarkwhenのノートとして関連付ける。"
+        conversion_to_markwhen: |
+          - PowerShellスクリプトは、各見出し要素（IDと要素名）とその属性リスト、および本文（説明）を読み取る。
+          - タスク要素の場合、[deadline]と[duration]から逆算した開始日(S)と、そこから期間を考慮した終了日(E)を求め、Markwhenのタイムラインエントリを `S/E: 要素名` の形式で生成。
+          - 見出し先頭の階層的IDを、Markwhenのタグとしてタイムラインエントリに追加 (例: `#1_1_1`のようにドットをアンダースコアに置換)。
+          - [status]属性はMarkwhenのタグとしてタイムラインエントリに追加 (例: `#completed`)。
+          - [progress]属性はタイムラインエントリの要素名に ` (進捗%)` の形で追記。
+          - [assignee]属性はタグ `#assignee-名前` などで表現。
+          - 見出し直下のMarkdown本文（説明）は、Markwhenのノート (`// 説明内容`) として関連付ける。
+    features:
+      - id: "WBS-VISUAL-MARKMAP"
+        name: "MarkmapによるWBS構造の視覚化"
+        details: "MD-WBSファイルはMarkdown見出しベースのため、Markmapで階層構造を視覚的に確認可能。"
+      - id: "WBS-EDIT-TEXT"
+        name: "テキストベースでの容易な編集"
+        details: "MD-WBSの内容をVS Code等のテキストエディタで容易かつ迅速に修正可能。"
+      - id: "WBS-HIERARCHY-TO-MARKWHEN"
+        name: "Markwhenへの正確な階層マッピング"
+        details: "Markdown見出しの階層構造が、Markwhenのネストされた `section`, `group` と正確なインデントにマッピングされること。"
+      - id: "WBS-TEXTBASE-MARKDOWN"
+        name: "Markdownベースのデータ管理"
+        details: "MD-WBSデータはプレーンなMarkdown形式（YAMLフロントマター含む）。"
+
+  gantt_chart_management: # Markwhen出力に特化
+    description: "Markwhenによるプロジェクトスケジュールの視覚化と管理。"
+    target_visualization_tools: ["Markwhen (VS Code拡張経由)"]
+    features:
+      - id: "GANTT-TIMESPAN-MARKWHEN"
+        name: "多様なタイムスパン表示 (Markwhen)"
+        details: "Markwhenの `view` ディレクティブやUI操作により、日・週・月・年単位で表示切替。"
+      - id: "GANTT-TEXTBASE-MARKWHEN-OUTPUT"
+        name: "Markwhen形式でのテキストベースデータ生成"
+        details: "タイムラインデータは、PowerShellスクリプトによってMD-WBSからMarkwhenの構文で生成されること。"
+      - id: "GANTT-HIERARCHICAL-GROUPING-MARKWHEN"
+        name: "Markwhenでの階層的グルーピング"
+        details: "MD-WBSのMarkdown見出し構造に基づき、Markwhenの `section` およびネストされた `group` 機能でタスクや作業まとまりを階層的に視覚的にグルーピングできること。"
+      - id: "GANTT-STATUS-TAGS-MARKWHEN"
+        name: "Markwhenでの進捗ステータスタグ表示"
+        details: "MD-WBSの `status` 属性をMarkwhenのタグ（例: `#completed`）に変換し、視覚的に進捗を識別しやすくすること。"
+      - id: "GANTT-HOLIDAY-DISPLAY-MARKWHEN"
+        name: "Markwhenでの祝日表示制御と専用セクション"
+        details: "Markwhenに出力する祝日を、「全て表示」「プロジェクト期間内のみ表示」「表示しない」から選択できること。表示する場合、ファイルの最後に独立した `section 祝日` 内に `group Holidays` として出力する。"
+    reverse_scheduling_support:
+      id: "GANTT-REVERSE-CALCULATION"
+      name: "逆線表による計画立案"
+      details: "MD-WBSで定義された締切日と所要営業日数から、PowerShellスクリプトが開始日と期間を考慮した終了日を自動算出する方式をサポートすること。"
+      requirements:
+        task_definition: "MD-WBSの要素属性リスト内の `deadline` および `duration` を使用する。"
+        date_calculation: "設定された締切日と所要営業日数から、土日及び指定された祝日を除外して開始日と終了日を自動算出できること。" # 「終了日」も明記
+        holiday_management:
+            description: "祝日リストを外部CSVファイルで管理し、逆算処理時に参照できること。"
+            file_handling: "法定休日CSVと会社独自の休日CSVを個別のパラメータで指定し、スクリプトがこれらをマージして処理する。"
+            csv_format:
+              column1_date: "日付。YYYY/M/D または YYYY-MM-DD 等、PowerShellの `[datetime]` 型で解釈可能な形式。"
+              column2_name: "祝日・休日名称（文字列）。"
+              header: "ヘッダ行の有無は許容する。スクリプトはヘッダを適切に処理できるように設計する（例: 1行目スキップと固定ヘッダ名割当）。"
+              encoding: "UTF-8 (推奨) または Shift_JIS。スクリプトはエンコーディングを適切に処理する (Shift_JISフォールバックなど)。"
+  dependency_management: # 新規セクション
+    description: "タスク間の依存関係の定義と検証。"
+    definition_method: "MD-WBSのタスク属性リスト内で `depends: 先行タスクの階層的ID` の形式で定義する。"
+    validation:
+      id: "DEP-VALIDATE-WARNING"
+      name: "依存関係の論理的矛盾の警告"
+      details: "PowerShellスクリプトは、計算された各タスクの開始日と、その先行タスクの計算された終了日を比較し、後続タスクが先行タスクの終了日以前に開始する計画になっている場合に警告メッセージをコンソールに出力する。警告は計画の見直しを促すものであり、スケジュールの自動調整は行わない。"
+
+non_functional_requirements:
+  security:
+    - id: "SEC-LOCAL"
+      name: "データ機密性"
+      details: "全てのプロジェクトデータはローカル環境に保存・処理され、外部への意図しない送信がないこと。OSレベルでのファイルアクセス制御が適切に行われていることを前提とする。"
+  usability:
+    - id: "USE-VSCODE"
+      name: "VS Code中心の操作性"
+      details: "可能な限り多くの操作がVS Code内で完結。"
+    - id: "USE-TEXTEDIT-MDWBS"
+      name: "直感的なMD-WBS編集"
+      details: "MD-WBSのデータ修正は、Markdownの知識があれば平易なテキスト編集で行えること。"
+  maintainability:
+    - id: "MAINT-SCRIPT-READABLE"
+      name: "スクリプトの保守性・可読性"
+      details: "PowerShellスクリプトは、コメント、適切な命名規則、関数分割により可読性が高く、修正・拡張が比較的容易であること。"
+    - id: "MAINT-CONFIG-CSV"
+      name: "設定ファイル(祝日CSV)の管理容易性"
+      details: "祝日リストは人間が読み書きしやすいCSV形式。"
+
+constraints_and_assumptions:
+  - id: "CONST-NO-SAAS"
+    details: "SaaSは利用不可。"
+  - id: "CONST-NO-PAID-PKG"
+    details: "有償パッケージソフトウェアは利用不可。"
+  - id: "CONST-LOCAL-ONLY"
+    details: "全データ処理・保存はローカル完結。"
+  - id: "CONST-VSCODE-MAIN"
+    details: "VS Codeを主要プラットフォームとする。"
+  - id: "CONST-POWERSHELL-VERSION"
+    details: "PowerShell 7.0 以上を推奨。YAMLフロントマターの厳密なパースにはPowerShell 7.3+またはpowershell-yamlモジュールが望ましいが、ない場合は簡易パースで対応。"
+  - id: "CONST-PYTHON-AUXILIARY"
+    details: "Python利用時は標準ライブラリまたは手動配置可能なライブラリのみ。"
+  - id: "ASSUMP-MARKWHEN-INDENT"
+    details: "生成するMarkwhenコードのインデントは、スペース4つを1レベルとして厳密に制御する。"
+  - id: "ASSUMP-MDWBS-ATTR-INDENT"
+    details: "MD-WBS内の属性リストは、親見出しに対して1段インデント（スペース4つ）されていることをパースの前提とする。"
+
+deliverables_of_the_established_methodology:
+  - "MD-WBS (ID見出し化・属性リスト形式) のテンプレートファイル"
+  - "祝日リスト用CSVファイルのサンプルおよびフォーマット説明"
+  - "PowerShellスクリプト (`md-wbs2gantt.ps1` または `md-wbs2markwhen.ps1`)"
+  - "利用手順書（セットアップ方法、MD-WBS記述方法、スクリプト実行方法、依存関係警告の解釈などを含む）"
+
+metadata:
+  document_version: "4.0" # 最新仕様反映
+  creation_date: "2025-05-16"
+  created_by: "AI Assistant (Gemini)"
+  based_on_discussion_with_user: true
+  status: "Final Draft"

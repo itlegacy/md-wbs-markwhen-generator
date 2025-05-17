@@ -1,0 +1,195 @@
+# 詳細設計書 (コード設計書): md-wbs2markwhen.ps1 - (MD-WBS v5 & Script v3.0対応版)
+
+script_information:
+  name: "md-wbs2markwhen.ps1" # スクリプト名確定
+  version: "3.0"
+  creation_date: "2025-05-16"
+  created_by: "AI Assistant (Gemini) based on user requirements and existing code"
+  target_powershell_version: "7.0 (YAMLフロントマターの厳密な解析には7.3+またはpowershell-yamlモジュール推奨)"
+  description: |
+    階層ID付き見出しと1段インデントされた属性リストを用いた拡張MD-WBSファイルを解析し、
+    タスクの開始日と期間を考慮した終了日を逆算（土日祝除外）して、
+    Markwhen形式の視覚的なタイムラインデータを出力する。
+    YAMLフロントマターの簡易パースにも対応。
+
+purpose: |
+  ローカル環境で完結するテキストベースのプロジェクト計画 (逆線表) 立案を支援する。
+  VS Code と連携し、構造化されたMD-WBS から表現力豊かなMarkwhenタイムラインを生成するプロセスを自動化する。
+
+input_parameters:
+  - name: "WbsFilePath"
+    type: "string"
+    mandatory: true
+    description: "拡張MD-WBSデータが記述されたMarkdownファイルのパス。"
+  - name: "OfficialHolidayFilePath"
+    type: "string"
+    mandatory: true
+    description: "国民の祝日などが記載されたCSVファイルのパス。"
+  - name: "CompanyHolidayFilePath"
+    type: "string"
+    mandatory: false
+    description: "会社独自の休日が記載されたCSVファイルのパス（任意）。"
+  - name: "OutputFilePath"
+    type: "string"
+    mandatory: true
+    description: "生成されるMarkwhenデータを出力するファイルのパス。"
+  - name: "OutputFormat"
+    type: "string"
+    mandatory: true
+    validation: "Markwhen"
+    default_value: "Markwhen"
+    description: "出力形式。『Markwhen』のみをサポート。"
+  - name: "DateFormatPattern"
+    type: "string"
+    mandatory: false
+    default_value: "yyyy-MM-dd"
+    description: "Markwhen内で使用する日付の書式（小文字'dd'を使用）。"
+  - name: "DefaultEncoding"
+    type: "string"
+    mandatory: false
+    default_value: "UTF8"
+    description: "入出力ファイルのデフォルトエンコーディング。出力はUTF8NoBOMを推奨。"
+  - name: "MarkwhenHolidayDisplayMode"
+    type: "string"
+    mandatory: false
+    validation: "All, InRange, None"
+    default_value: "InRange"
+    description: "Markwhen出力時の祝日表示モード。"
+
+output_specifications:
+  file_path: "入力パラメータ `OutputFilePath` で指定されたパス"
+  format: "Markwhenテキスト形式"
+  encoding: "UTF8NoBOM (スクリプト内でSet-Content時に指定)"
+  content_details:
+    front_matter: |
+      MD-WBSのYAMLフロントマターから抽出した `title`, `description`, `date`, `view` を
+      Markwhenファイルの先頭に `---` で区切られたYAML形式で出力する。
+    sections_and_groups: |
+      MD-WBSの見出し階層を、Markwhenの `section 要素名` およびネストされた `group "要素名"` と
+      対応する `endsection`, `endgroup` で表現する。インデントはスペース4つ単位で厳密に制御。
+    task_lines:
+      format: "`CalculatedStartDate/CalculatedEndDate: 要素名 (Progress%) #ID #Status #Assignee` の形式。"
+      indentation: "MD-WBS内の見出し階層をMarkwhenのタスク行インデントに正確に反映。"
+    notes: "MD-WBSの見出し直下のMarkdown本文（説明）は、Markwhenのノート (`// 説明内容`) としてタスク行の下に関連付ける。"
+    holidays: "`MarkwhenHolidayDisplayMode` に基づき、フィルタリングされた祝日をファイルの最後に独立した `section 祝日` 内の `group Holidays` として出力する。"
+
+main_processing_flow:
+  - step: 1
+    action: "パラメータ検証とグローバル変数初期設定"
+    details: "`$Global:DateFormatPattern` の設定など。"
+  - step: 2
+    action: "祝日リストの読み込みとマージ (`Import-HolidayList` 関数)"
+    details: "複数のCSVファイルを処理（エンコーディングShift_JISフォールバック、BOM除去、ヘッダスキップ、固定ヘッダ名でのパース）。重複排除された祝日日付のリストを生成。"
+  - step: 3
+    action: "拡張MD-WBSファイルの解析 (`Parse-WbsMarkdownAndMetadataAdvanced` 関数)"
+    details: |
+      - YAMLフロントマター部分を識別・パースし、`ProjectMetadata` オブジェクトに格納 (`ConvertFrom-Yaml` 利用可否をチェックし、不可なら簡易キーバリューパース)。
+      - Markdown本文を1行ずつ解析:
+        - 見出し行 (`^#+\s+[\d\.]*\d\.?\s*.+`) を検出し、階層ID、要素名、レベルを取得。`WbsElementNode` を生成。
+        - `HierarchyLevel` に基づき `ElementType` (Section, Group, Task) を設定。
+        - 親子関係をスタックで解決し、`WbsElementNode` のツリー (`$rootElements` と `Children`) を構築。
+        - 現在処理中の見出し要素 (`$currentWbsElement`) を追跡。
+        - 見出しの直後に続く**1段インデントされたリストアイテム** (`^\s{4}-\s*(keyword):\s*.+`) を属性行としてバッファ (`$attributeLinesBuffer`) に一時保存。値の `#` 以降はコメントとして除去。
+        - 見出しの直後で属性リストでも新しい見出しでもない行を本文 (`$descriptionBuffer`) として収集（行頭空白除去）。
+        - 新しい見出し、空行、またはファイルの終端で、バッファされた属性行を `$currentWbsElement.ParseCollectedAttributes()` で処理し、本文を `$currentWbsElement.DescriptionText` に設定。
+  - step: 4
+    action: "日付計算対象タスクのフラット化 (`Flatten-WbsTreeNodes` 関数)"
+    details: "WBSツリーから、`DurationDays > 0` かつ `Deadline` が有効な要素をフラットなリスト (`$Global:AllTaskNodesFlatList`) に抽出。"
+  - step: 5
+    action: "各タスクの開始日と終了日の計算"
+    details: |
+      - フラット化された各タスクノードに対し、`Calculate-TaskStartDate` で開始日を逆算。
+      - 次に `Calculate-TaskEndDate` で、計算された開始日と期間から実際の終了日を計算。
+      - 結果を各タスクノードの `CalculatedStartDate`, `CalculatedEndDate` プロパティに格納。
+  - step: 6
+    action: "プロジェクト全体期間の特定 (祝日フィルタ用)"
+    details: "`ProjectMetadata` の情報と、計算されたタスク日付範囲から、祝日表示フィルタリング用の全体期間を決定。"
+  - step: 7
+    action: "依存関係のチェックと警告"
+    details: "計算されたタスク日付に基づき、先行タスクの終了日以前（同日含む）に後続タスクが開始する計画矛盾を検出し、詳細な警告メッセージをコンソールに出力。"
+  - step: 8
+    action: "Markwhen形式テキストデータの生成 (`Format-GanttMarkwhen` 関数)"
+    details: "`ProjectMetadata` とWBSツリー (`$rootElements`) から、Markwhen構文の文字列を生成。"
+  - step: 9
+    action: "出力ファイルへの書き込み"
+    details: "生成されたMarkwhen文字列を、`-Encoding UTF8NoBOM` でファイルに出力。"
+  - step: 10
+    action: "処理結果の表示と終了"
+    details: "依存関係の警告サマリーなどを表示。"
+
+internal_data_structures:
+  ProjectMetadata_Class:
+    name: "ProjectMetadata"
+    properties:
+      - name: "Title"; type: "string"
+      - name: "Description"; type: "string"
+      - name: "DefinedDate"; type: "System.DateTime"
+      - name: "ProjectPlanStartDate"; type: "System.DateTime"
+      - name: "ProjectPlanOverallDeadline"; type: "System.DateTime"
+      - name: "View"; type: "string"; default: "month"
+  WbsElementNode_Class:
+    name: "WbsElementNode"
+    properties:
+      - name: "Id"; type: "string"; description: "階層的ID (例: 1.1.1)"
+      - name: "Name"; type: "string"; description: "見出しのテキスト部分 (ID除去後)"
+      - name: "HierarchyLevel"; type: "int"; description: "Markdownの見出しレベル"
+      - name: "ElementType"; type: "string"; description: "Section, Group, Task"
+      - name: "Attributes"; type: "System.Collections.Hashtable"; description: "パースされた属性 (キーは小文字、値はコメント除去・末尾ドット除去済み)"
+      - name: "DescriptionText"; type: "string"; description: "見出し直下のMarkdown本文（トリム済み）"
+      - name: "Deadline"; type: "System.DateTime"
+      - name: "DurationDays"; type: "int"; default: 0
+      - name: "CalculatedStartDate"; type: "System.DateTime"
+      - name: "CalculatedEndDate"; type: "System.DateTime"
+      - name: "Children"; type: "System.Collections.Generic.List[WbsElementNode]"
+      - name: "Parent"; type: "WbsElementNode"
+      - name: "RawAttributeLines"; type: "string[]"; description: "パース前の一時的な属性行バッファ（インデント除去済み）"
+    methods:
+      - name: "AddRawAttributeLine"; params: "[string]$Line"; description: "属性行候補をバッファに追加（先頭インデント除去）"
+      - name: "ParseCollectedAttributes"; description: |
+          バッファされた属性行を解析し、許可されたキーワード (`deadline`, `duration`, `status`, `progress`, `assignee`, `depends`) 
+          の値を抽出し、`Attributes` ハッシュテーブルと専用プロパティ (`Deadline`, `DurationDays`) に格納。
+          値の `#` 以降コメント除去、`depends` の値の末尾ドット除去も行う。
+
+key_functions_design:
+  - function_name: "Import-HolidayList"
+    description: "指定された祝日CSVファイル群を読み込み、日付リストをマージして返す。"
+    # (入力・出力・コアロジックは前回の正常動作コードを踏襲)
+  - function_name: "Parse-WbsMarkdownAndMetadataAdvanced"
+    description: "拡張MD-WBS Markdownファイルを解析し、プロジェクトメタ情報とWbsElementNodeのツリーを生成する。"
+    # (入力・出力・コアロジックは前回の正常動作コードと要件定義v5.0のパースロジックを反映)
+  - function_name: "Calculate-TaskStartDate"
+    description: "締切日と所要営業日数、祝日リストからタスクの開始日を逆算する。"
+    # (入力・出力・コアロジックは前回の正常動作コードを踏襲)
+  - function_name: "Calculate-TaskEndDate"
+    description: "開始日と所要営業日数、祝日リストからタスクの終了日を計算する。"
+    # (入力・出力・コアロジックは前回の正常動作コード (代替案含む) を踏襲)
+  - function_name: "Format-GanttMarkwhen"
+    description: "ProjectMetadataとWbsElementNodeツリーからMarkwhen構文の文字列を生成する。"
+    inputs: "[ProjectMetadata]$Metadata", "[System.Collections.Generic.List[WbsElementNode]]$RootWbsElements", "[string]$DatePattern", "[System.Collections.Generic.List[datetime]]$Holidays", "[datetime]$ProjectOverallStartDateForHolidayFilter", "[datetime]$ProjectOverallEndDateForHolidayFilter", "[string]$HolidayDisplayMode"
+    outputs: "[string]"
+    core_logic: |
+      - `ProjectMetadata` からMarkwhenフロントマター (title, description, date, view) を生成。
+      - **`ConvertTo-MarkwhenRecursiveUpdated` (ネストされたヘルパー関数):**
+        - WbsElementNodeツリーを再帰的に処理。
+        - `$Element.ElementType` と `$Element.Children.Count` に基づき、`section ... endsection`, `group "要素名" ... endgroup` を適切なインデントで出力。
+        - 子を持つTask要素は `group "タスク名"` とし、その中に「概要」タイムラインエントリと子タスクを出力。
+        - 子を持たないTask要素はタイムラインエントリ (`CalculatedStartDate/CalculatedEndDate: 要素名 (Progress%) #ID #Status #Assignee`) として出力。
+        - IDのドットはアンダースコアに置換。
+        - `DescriptionText` があればノート (`// 説明`) として出力。
+      - 最後に、`HolidayDisplayMode` に基づきフィルタリングされた祝日を独立した `section 祝日` 内の `group Holidays ... endgroup endsection` として出力。
+
+error_handling:
+  - type: "File I/O, Parameter Validation, Data Parsing (YAML, Markdown, CSV), Date Calculation, General Errors"
+  logging_and_messages: "`Write-Error` (致命的エラー), `Write-Warning` (警告、処理続行可能), `Write-Verbose` (詳細ログ、-Verboseスイッチで表示), `Write-Host` (主要な処理開始・終了メッセージ) を使用。"
+
+file_encoding_considerations:
+  input_wbs: "`DefaultEncoding` パラメータで指定。UTF-8推奨。"
+  input_holidays_csv: "`DefaultEncoding` を基本としつつ、Shift_JISフォールバックを試みる。BOM除去処理を含む。"
+  output_gantt: "`DefaultEncoding` パラメータで指定し、スクリプト内で `Set-Content -Encoding UTF8NoBOM` を使用することを推奨。"
+
+assumptions_and_constraints:
+  - "PowerShell 7.0+ 環境。"
+  - "入力拡張MD-WBSファイルは定義された書式に従う（YAMLフロントマター、見出し先頭ID、属性リストの1段インデント、許可されたキーワード）。"
+  - "Markwhenのインデント規則（スペース4つ単位）を厳密に守って出力。"
+  - "依存関係は単一先行タスクIDを基本とし、そのIDはMD-WBS内でユニークであること。"
+  - "祝日CSVは1行目にヘッダがあり、2行目以降がデータである形式を基本とする (スクリプト内で1行目スキップと固定ヘッダ名割当で対応)。"
