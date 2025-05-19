@@ -7,7 +7,9 @@ Thumbs.db
 
 # User generated output (if users generate outputs in the project root or specific dirs not meant for commit)
 # /samples/generated_gantt_examples/* # サンプルとして提供するものはコミットするが、ユーザーが試して作ったものはコミットさせない場合など
-my_project_gantt.md # 個人的なテスト出力など
+ServiceDev_Project_v5_excel_test.xlsx
+ServiceDev_Project_v5_markwhen_test.mw
 
 # VS Code specific
 .vscode/
+my-repo.code-workspace
