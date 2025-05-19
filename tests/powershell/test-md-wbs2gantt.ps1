@@ -1,143 +1,145 @@
 # md-wbs2ganttのテストスクリプト
-# このスクリプトは'tests/powershell'ディレクトリに配置され、
-# メインスクリプトはプロジェクトルートからの'src/powershell/'にあります。
-# サンプルファイルは'samples/'にあります。
+# このスクリプトはプロジェクトルートの 'tests/powershell/' ディレクトリに配置されていることを想定。
+# メインスクリプトはプロジェクトルートからの 'src/powershell/' にあることを想定。
+# サンプルファイルはプロジェクトルートの 'samples/' ディレクトリ以下にあることを想定。
 
 # --- 設定 ---
-$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")     # 'tests\powershell'はプロジェクトルート直下にあると仮定
+try {
+    $PSScriptRootResolved = Resolve-Path $PSScriptRoot # スクリプトの実際のパスを取得
+} catch {
+    Write-Error "テストスクリプトの場所を特定できません。スクリプトを保存してから実行してください。"
+    exit 1
+}
+
+# プロジェクトルートの決定 (テストスクリプトが tests/powershell/ にある場合)
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRootResolved "..\..")
+# もしテストスクリプトが tests/ 直下なら:
+# $ProjectRoot = Resolve-Path (Join-Path $PSScriptRootResolved "..")
+
 $SrcDir = Join-Path $ProjectRoot "src\powershell"
-$TestSamplesDir = Join-Path $ProjectRoot "samples" # サンプルファイルはプロジェクトルート/samples/にあります
+$SamplesBaseDir = Join-Path $ProjectRoot "samples" # プロジェクトルート直下の samples ディレクトリ
 
-$MainScriptPath = Join-Path $SrcDir "md-wbs2gantt.ps1"
+$MainScriptPath = Join-Path $SrcDir "md-wbs2gantt.ps1" # メインスクリプト名を md-wbs2gantt.ps1 に戻す
 
-# テスト用WBSファイル（samples/から）
-$TestWbsFile = Join-Path $TestSamplesDir "mdwbs\ServiceDev_Project_v5.md"
+# テスト用WBSファイル
+$TestWbsFile = Join-Path $SamplesBaseDir "mdwbs\ServiceDev_Project_v5.md"
 
-# 祝日ファイル（samples/から）
-# 利用可能で推奨される場合はUTF-8版の祝日ファイルを使用
-$OfficialHolidays = Join-Path $TestSamplesDir "holiday_lists\official_holidays_jp_example.csv"
-# Shift_JIS版でテストしたい場合（スクリプトがエンコーディングを正しく処理する場合）:
-# $OfficialHolidays = Join-Path $TestSamplesDir "syukujitsu.csv"
+# 祝日ファイル
+$OfficialHolidays = Join-Path $SamplesBaseDir "holiday_lists\official_holidays_jp_example.csv"
+$CompanyHolidays = Join-Path $SamplesBaseDir "holiday_lists\company_holidays_example.csv"
 
-$CompanyHolidays = Join-Path $TestSamplesDir "holiday_lists\company_holidays_example.csv"
-
-# 出力ファイル
-$TestOutputFileDir = Join-Path $TestSamplesDir "excel_outputs" # 出力はsamples/excel_outputs/に
-if (-not (Test-Path $TestOutputFileDir)) {
-    $null = New-Item -ItemType Directory -Path $TestOutputFileDir -Force
-}
-# WBSファイル名のベース名を出力ファイルに使用
+# 出力設定
+$TestOutputFormat = "ExcelDirect" # "Markwhen" または "ExcelDirect"
 $OutputFileNameBase = [System.IO.Path]::GetFileNameWithoutExtension($TestWbsFile)
-$TestOutputFile = Join-Path $TestOutputFileDir "${OutputFileNameBase}_excel_test.xlsx" # Visual Studio Code用の機能拡張は`.mw`のみを許容
+$TestOutputFile = ""
+$ExcelTemplateFile = ""
 
-# 出力形式
-$TestOutputFormat = "ExcelDirect" # または "Mermaid" : Mermaid記法の出力は実装されていません
-
-# Copy the Excel template file to the output folder
-$TemplateFile = Join-Path $TestSamplesDir "excel\wbs-gantt-template.xlsx"
-$OutputTemplateFile = Join-Path $TestOutputFileDir "${OutputFileNameBase}_excel_test.xlsx"
-
-# 既存のファイルを削除（存在する場合）
-if (Test-Path $OutputTemplateFile) {
-    Remove-Item $OutputTemplateFile -Force
-}
-
-# テンプレートファイルをコピー
-Copy-Item -Path $TemplateFile -Destination $OutputTemplateFile -Force
-
-# ファイルが利用可能になるまで待機
-$maxAttempts = 10
-$attempt = 0
-$fileReady = $false
-
-while (-not $fileReady -and $attempt -lt $maxAttempts) {
-    try {
-        $excel = New-Object -ComObject Excel.Application
-        $excel.Visible = $false
-        $workbook = $excel.Workbooks.Open($OutputTemplateFile)
-        $workbook.Close($false)
-        $excel.Quit()
-        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null
-        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
-        $fileReady = $true
+if ($TestOutputFormat -eq "Markwhen") {
+    $TestOutputFileDir = Join-Path $SamplesBaseDir "markwhen_outputs"
+    if (-not (Test-Path $TestOutputFileDir)) {
+        $null = New-Item -ItemType Directory -Path $TestOutputFileDir -Force
     }
-    catch {
-        $attempt++
-        Start-Sleep -Seconds 1
+    $TestOutputFile = Join-Path $TestOutputFileDir "${OutputFileNameBase}_output.mw"
+} elseif ($TestOutputFormat -eq "ExcelDirect") {
+    $TestOutputFileDir = Join-Path $SamplesBaseDir "excel_outputs"
+    if (-not (Test-Path $TestOutputFileDir)) {
+        $null = New-Item -ItemType Directory -Path $TestOutputFileDir -Force
     }
+    $ExcelTemplateFile = Join-Path $SamplesBaseDir "excel\wbs-gantt-template.xlsx" # Excelテンプレートのパス
+    $TestOutputFile = Join-Path $TestOutputFileDir "${OutputFileNameBase}_excel_output.xlsx" # 出力ファイル名
+
+    if (-not (Test-Path $ExcelTemplateFile -PathType Leaf)) {
+        Write-Error "Excelテンプレートファイルが見つかりません: $ExcelTemplateFile"
+        exit 1
+    }
+    # 既存の出力ファイルを削除（存在する場合）
+    if (Test-Path $TestOutputFile) {
+        Write-Verbose "既存の出力ファイルを削除します: $TestOutputFile"
+        Remove-Item $TestOutputFile -Force -ErrorAction SilentlyContinue
+    }
+    # テンプレートファイルをコピーして出力ファイルとして使用
+    Write-Verbose "テンプレートファイルをコピーしています: $ExcelTemplateFile -> $TestOutputFile"
+    Copy-Item -Path $ExcelTemplateFile -Destination $TestOutputFile -Force
+    Start-Sleep -Seconds 3 # コピー直後のファイルロックを避けるための待機時間を少し増やす
 }
 
-if (-not $fileReady) {
-    Write-Error "出力ファイルの準備ができませんでした: $OutputTemplateFile"
-    exit 1
-}
-
-# --- メインスクリプトの存在確認 ---
-if (-not (Test-Path $MainScriptPath -PathType Leaf)) {
-    Write-Error "メインスクリプトが見つかりません: $MainScriptPath"
-    exit 1
-}
-
-# Write-Host "---"
-# Get-Content $MainScriptPath | Select-Object -First 10
-# Write-Host "---"
-
-# --- 入力ファイルの存在確認 ---
-if (-not (Test-Path $TestWbsFile -PathType Leaf)) {
-    Write-Error "テスト用WBSファイルが見つかりません: $TestWbsFile"
-    exit 1
-}
-if (-not (Test-Path $OfficialHolidays -PathType Leaf)) {
-    Write-Error "祝日ファイルが見つかりません: $OfficialHolidays"
-    exit 1
-}
+# --- スクリプトと入力ファイルの存在確認 ---
+if (-not (Test-Path $MainScriptPath -PathType Leaf)) { Write-Error "メインスクリプトが見つかりません: $MainScriptPath"; exit 1 }
+if (-not (Test-Path $TestWbsFile -PathType Leaf)) { Write-Error "テスト用WBSファイルが見つかりません: $TestWbsFile"; exit 1 }
+if (-not (Test-Path $OfficialHolidays -PathType Leaf)) { Write-Error "祝日ファイルが見つかりません: $OfficialHolidays"; exit 1 }
 if (-not [string]::IsNullOrEmpty($CompanyHolidays) -and -not (Test-Path $CompanyHolidays -PathType Leaf)) {
-    Write-Warning "会社休日ファイルが指定されていますが見つかりません: $CompanyHolidays。続行します。"
-    $CompanyHolidays = $null # 見つからない場合は明示的にnullに設定
+    Write-Warning "会社休日ファイルが指定されていますが見つかりません: $CompanyHolidays。処理は続行しますが、このファイルは無視されます。"
+    $CompanyHolidays = $null
 }
 
-# --- テンプレートファイルの確認 ---
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false
-$workbook = $excel.Workbooks.Open($TemplateFile)
-Write-Host "テンプレートファイルのワークシート:"
-foreach ($sheet in $workbook.Worksheets) {
-    Write-Host "シート名: $($sheet.Name), インデックス: $($sheet.Index)"
-}
-$workbook.Close($false)
-$excel.Quit()
-[System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null
-[System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
-[System.GC]::Collect()
-[System.GC]::WaitForPendingFinalizers()
+# --- (テンプレートファイルのワークシート名確認のブロックは、エラーの原因になるため一旦削除またはコメントアウト) ---
+# if ($TestOutputFormat -eq "ExcelDirect") {
+#     Write-Host "テンプレートファイルのワークシート (確認用):"
+#     try {
+#         $excel = New-Object -ComObject Excel.Application; $excel.Visible = $false
+#         $workbook = $excel.Workbooks.Open($TestOutputFile)
+#         foreach ($sheet in $workbook.Worksheets) {
+#             Write-Host "  シート名: $($sheet.Name), インデックス: $($sheet.Index)"
+#             # 開始行の確認を追加
+#             $usedRange = $sheet.UsedRange
+#             if ($usedRange) {
+#                 Write-Host "  使用中の開始行: $($usedRange.Row)"
+#                 # $scriptParams.ExcelStartRow = $usedRange.Row # ここで設定すると、以下の明示的な設定を上書きしてしまう可能性がある
+#             }
+#         }
+#         $workbook.Close($false); $excel.Quit()
+#         $null = [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook)
+#         $null = [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
+#         [System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()
+#     } catch {
+#         Write-Warning "Excelテンプレートのシート名確認中にエラー: $($_.Exception.Message)"
+#     }
+# }
+
 
 # --- スクリプトの実行 ---
-Write-Host "md-wbs2excel.ps1を更新されたパラメータで実行中..."
-Write-Host "メインスクリプト: $MainScriptPath"
+Write-Host "メインスクリプト ($($MainScriptPath)) を更新されたパラメータで実行中..."
 Write-Host "WBSファイル: $TestWbsFile"
 Write-Host "祝日ファイル: $OfficialHolidays"
-if (-not [string]::IsNullOrEmpty($CompanyHolidays)) {
-    Write-Host "会社休日ファイル: $CompanyHolidays"
-} else {
-    Write-Host "会社休日ファイル: 指定なしまたは見つかりません"
-}
+if (-not [string]::IsNullOrEmpty($CompanyHolidays)) { Write-Host "会社休日ファイル: $CompanyHolidays" } else { Write-Host "会社休日ファイル: 指定なし" }
 Write-Host "出力ファイル: $TestOutputFile"
 Write-Host "出力形式: $TestOutputFormat"
 Write-Host "---"
 
-# テストスクリプトを修正
-$ExcelSheetNameOrIndex = "Sheet1"  # インデックスの代わりにシート名を指定
+# メインスクリプトへのパラメータ準備
+$scriptParams = @{
+    WbsFilePath             = $TestWbsFile
+    OfficialHolidayFilePath = $OfficialHolidays
+    OutputFilePath          = $TestOutputFile
+    OutputFormat            = $TestOutputFormat
+    DateFormatPattern       = "yyyy/MM/dd" # ExcelDirect 時のメインスクリプトDateFormatPatternのデフォルト上書き
+    DefaultEncoding         = "UTF8"       # メインスクリプトのDefaultEncoding
+    Verbose                 = $true        # 詳細ログを有効化
+}
+if (-not [string]::IsNullOrEmpty($CompanyHolidays)) {
+    $scriptParams.CompanyHolidayFilePath = $CompanyHolidays
+}
+# MarkwhenHolidayDisplayMode は $TestOutputFormat が "Markwhen" の場合のみ設定
+if ($TestOutputFormat -eq "Markwhen") {
+    $scriptParams.MarkwhenHolidayDisplayMode = "InRange" # Markwhen専用パラメータ
+}
+# ExcelDirect の場合のパラメータはメインスクリプトのparamブロックでデフォルト値が設定されているので、
+# テストスクリプト側で上書きしたい場合のみ設定する。
+# 今回はメインスクリプトのデフォルト値 (SheetIdentifier=1, ExcelStartRow=5) を使う想定。
+# もしテストスクリプトでこれらを変更したい場合は、以下のように追加する。
+# elseif ($TestOutputFormat -eq "ExcelDirect") {
+#     $scriptParams.ExcelSheetNameOrIndex = "Sheet1" # または 1
+#     $scriptParams.ExcelStartRow = 5
+# }
 
-# スクリプトの実行
+# ExcelDirectの場合、メインスクリプトのデフォルト値を使用するため、ここではExcel関連のパラメータは設定しない。
+# Write-Verbose "ExcelStartRowの設定値: $($scriptParams.ExcelStartRow)" # デフォルト値を使う場合はこのログは意味がなくなる
+
 try {
-    & $MainScriptPath -WbsFilePath $TestWbsFile `
-                       -OfficialHolidayFilePath $OfficialHolidays `
-                       -CompanyHolidayFilePath $CompanyHolidays `
-                       -OutputFilePath $TestOutputFile `
-                       -OutputFormat $TestOutputFormat `
-                       -Verbose
+    # メインスクリプトの呼び出し
+    # -ProjectInfo や StartDate関連のハッシュテーブル作成は不要
+    & $MainScriptPath @scriptParams -ErrorAction Stop
+
     Write-Host "---"
     Write-Host "スクリプトの実行が完了しました。"
 
@@ -148,36 +150,16 @@ try {
         Write-Warning "出力ファイルが生成されませんでした: $TestOutputFile"
     }
 
-    # 大量のデータ処理時のメモリ使用量を最適化
-    [System.GC]::Collect()
-    [System.GC]::WaitForPendingFinalizers()
-
-    # 処理の進捗状況をより詳細に表示
-    Write-Verbose "処理開始: $($Element.Id) $($Element.Name)"
-    Write-Verbose "処理完了: $($Element.Id) $($Element.Name)"
-
 } catch {
     Write-Error "スクリプト実行中にエラーが発生しました:"
-    Write-Error $_.Exception.Message
+    Write-Error $_.Exception.ToString() # 詳細なエラー情報を表示
+    if ($_.InvocationInfo) {
+        Write-Error "エラー発生箇所: $($_.InvocationInfo.ScriptName) - Line $($_.InvocationInfo.ScriptLineNumber)"
+    }
+} finally {
+    # 大量のデータ処理時のメモリ使用量を最適化 (メインスクリプト側で解放処理があるので、ここでは不要かも)
+    # [System.GC]::Collect()
+    # [System.GC]::WaitForPendingFinalizers()
 }
 
 Write-Host "テストスクリプトが終了しました。"
-
-# テストスクリプトに以下のケースを追加
-# - 不正な日付形式のテスト
-# - 大量データの処理テスト
-# - エンコーディング変換のテスト
-
-# 関数のヘルプコメントを追加
-<#
-.SYNOPSIS
-    タスクの開始日を計算します。
-.DESCRIPTION
-    期限日と期間から、土日祝日を除外して開始日を計算します。
-.PARAMETER DeadlineDate
-    タスクの期限日
-.PARAMETER DurationBusinessDays
-    タスクの所要日数（営業日）
-.PARAMETER Holidays
-    祝日リスト
-#>
