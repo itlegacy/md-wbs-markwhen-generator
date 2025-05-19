@@ -1,4 +1,4 @@
-# md-wbs2excel1のテストスクリプト
+# md-wbs2ganttのテストスクリプト
 # このスクリプトは'tests/powershell'ディレクトリに配置され、
 # メインスクリプトはプロジェクトルートからの'src/powershell/'にあります。
 # サンプルファイルは'samples/'にあります。
@@ -8,7 +8,7 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")     # 'tests\power
 $SrcDir = Join-Path $ProjectRoot "src\powershell"
 $TestSamplesDir = Join-Path $ProjectRoot "samples" # サンプルファイルはプロジェクトルート/samples/にあります
 
-$MainScriptPath = Join-Path $SrcDir "md-wbs2excel.ps1"
+$MainScriptPath = Join-Path $SrcDir "md-wbs2gantt.ps1"
 
 # テスト用WBSファイル（samples/から）
 $TestWbsFile = Join-Path $TestSamplesDir "mdwbs\ServiceDev_Project_v5.md"
@@ -31,12 +31,48 @@ $OutputFileNameBase = [System.IO.Path]::GetFileNameWithoutExtension($TestWbsFile
 $TestOutputFile = Join-Path $TestOutputFileDir "${OutputFileNameBase}_excel_test.xlsx" # Visual Studio Code用の機能拡張は`.mw`のみを許容
 
 # 出力形式
-$TestOutputFormat = "Excel" # または "Mermaid" : Mermaid記法の出力は実装されていません
+$TestOutputFormat = "ExcelDirect" # または "Mermaid" : Mermaid記法の出力は実装されていません
 
 # Copy the Excel template file to the output folder
 $TemplateFile = Join-Path $TestSamplesDir "excel\wbs-gantt-template.xlsx"
 $OutputTemplateFile = Join-Path $TestOutputFileDir "${OutputFileNameBase}_excel_test.xlsx"
+
+# 既存のファイルを削除（存在する場合）
+if (Test-Path $OutputTemplateFile) {
+    Remove-Item $OutputTemplateFile -Force
+}
+
+# テンプレートファイルをコピー
 Copy-Item -Path $TemplateFile -Destination $OutputTemplateFile -Force
+
+# ファイルが利用可能になるまで待機
+$maxAttempts = 10
+$attempt = 0
+$fileReady = $false
+
+while (-not $fileReady -and $attempt -lt $maxAttempts) {
+    try {
+        $excel = New-Object -ComObject Excel.Application
+        $excel.Visible = $false
+        $workbook = $excel.Workbooks.Open($OutputTemplateFile)
+        $workbook.Close($false)
+        $excel.Quit()
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        $fileReady = $true
+    }
+    catch {
+        $attempt++
+        Start-Sleep -Seconds 1
+    }
+}
+
+if (-not $fileReady) {
+    Write-Error "出力ファイルの準備ができませんでした: $OutputTemplateFile"
+    exit 1
+}
 
 # --- メインスクリプトの存在確認 ---
 if (-not (Test-Path $MainScriptPath -PathType Leaf)) {
@@ -62,6 +98,21 @@ if (-not [string]::IsNullOrEmpty($CompanyHolidays) -and -not (Test-Path $Company
     $CompanyHolidays = $null # 見つからない場合は明示的にnullに設定
 }
 
+# --- テンプレートファイルの確認 ---
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$workbook = $excel.Workbooks.Open($TemplateFile)
+Write-Host "テンプレートファイルのワークシート:"
+foreach ($sheet in $workbook.Worksheets) {
+    Write-Host "シート名: $($sheet.Name), インデックス: $($sheet.Index)"
+}
+$workbook.Close($false)
+$excel.Quit()
+[System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null
+[System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+[System.GC]::Collect()
+[System.GC]::WaitForPendingFinalizers()
+
 # --- スクリプトの実行 ---
 Write-Host "md-wbs2excel.ps1を更新されたパラメータで実行中..."
 Write-Host "メインスクリプト: $MainScriptPath"
@@ -75,6 +126,9 @@ if (-not [string]::IsNullOrEmpty($CompanyHolidays)) {
 Write-Host "出力ファイル: $TestOutputFile"
 Write-Host "出力形式: $TestOutputFormat"
 Write-Host "---"
+
+# テストスクリプトを修正
+$ExcelSheetNameOrIndex = "Sheet1"  # インデックスの代わりにシート名を指定
 
 # スクリプトの実行
 try {
@@ -94,9 +148,36 @@ try {
         Write-Warning "出力ファイルが生成されませんでした: $TestOutputFile"
     }
 
+    # 大量のデータ処理時のメモリ使用量を最適化
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+
+    # 処理の進捗状況をより詳細に表示
+    Write-Verbose "処理開始: $($Element.Id) $($Element.Name)"
+    Write-Verbose "処理完了: $($Element.Id) $($Element.Name)"
+
 } catch {
     Write-Error "スクリプト実行中にエラーが発生しました:"
     Write-Error $_.Exception.Message
 }
 
 Write-Host "テストスクリプトが終了しました。"
+
+# テストスクリプトに以下のケースを追加
+# - 不正な日付形式のテスト
+# - 大量データの処理テスト
+# - エンコーディング変換のテスト
+
+# 関数のヘルプコメントを追加
+<#
+.SYNOPSIS
+    タスクの開始日を計算します。
+.DESCRIPTION
+    期限日と期間から、土日祝日を除外して開始日を計算します。
+.PARAMETER DeadlineDate
+    タスクの期限日
+.PARAMETER DurationBusinessDays
+    タスクの所要日数（営業日）
+.PARAMETER Holidays
+    祝日リスト
+#>

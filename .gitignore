@@ -10,6 +10,13 @@ Thumbs.db
 ServiceDev_Project_v5_excel_test.xlsx
 ServiceDev_Project_v5_markwhen_test.mw
 
+# 不要なテストコード
+test-excel-com.ps1
+test-param-block.ps1
+
 # VS Code specific
 .vscode/
 my-repo.code-workspace
+
+# その他
+0
