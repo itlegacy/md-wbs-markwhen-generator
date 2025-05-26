@@ -1,0 +1,171 @@
+# Overall Project Requirements Definition (Project Charter)
+# File: 00_project_charter.yaml
+# Version: 1.0
+# Date: 2025-05-17
+
+project_definition:
+  project_name: "ローカル環境向けテキストベースWBS・スケジュール管理手法の確立"
+  project_acronym: "MD-WBS-Tool" # (任意)
+  prepared_for: "(対象組織・部門名など)"
+  prepared_by: "AI Assistant (Gemini) and User"
+  creation_date: "2025-05-17"
+  last_updated_date: "2025-05-17"
+
+# 1. Project Overview and Purpose
+# ================================
+overview: |
+  本プロジェクトは、社外秘情報を取り扱うことが可能で、かつ特定の有償ソフトウェアに依存しない、
+  柔軟で効率的なWBS（作業分解構成図）・スケジュール管理手法を確立することを目的とする。
+  中核となるのは、人間が読み書きしやすく、バージョン管理にも適したテキストベースのデータ形式
+  (MD-WBS: Markdown-based WBS) と、それを処理・視覚化するためのPowerShellスクリプト群である。
+  利用者は、使い慣れたテキストエディタ (特にVS Codeを推奨) とExcelを用いて、
+  プロジェクト計画の立案、進捗の簡易的な入力、そしてMarkwhen形式による視覚的なタイムライン確認が
+  行えるようになることを目指す。
+
+goals_and_objectives:
+  - goal_id: G01
+    description: "社外秘情報を安全に取り扱える、完全にローカル環境で動作するWBS・スケジュール管理の仕組みを構築する。"
+  - goal_id: G02
+    description: "テキストベース (Markdown) でWBSとスケジュール情報を管理し、可読性、編集容易性、バージョン管理親和性を確保する。"
+  - goal_id: G03
+    description: "逆線表を含む複数の計画スタイル（締切日から逆算、開始日から積算、日付範囲指定）に対応できる柔軟なデータモデルと処理ロジックを確立する。"
+  - goal_id: G04
+    description: "PowerShellスクリプトを用いて、MD-WBSデータから視覚的なMarkwhenタイムラインへの変換、および既存Excelフォーマットへの双方向データ連携（一部）を実現する。"
+  - goal_id: G05
+    description: "ツールの導入・利用にあたり、特別な有償ソフトウェアのライセンス購入を不要とする。"
+  - goal_id: G06
+    description: "定義されたMD-WBS記法とスクリプトにより、プロジェクト計画の標準化と効率化を支援する。"
+
+# 2. Scope
+# =========
+scope_statement: |
+  本プロジェクトのスコープは、MD-WBSの記法定義、それに基づいてWBS情報を記述するためのガイドライン作成、
+  および以下の機能を持つPowerShellスクリプト群の開発と関連ドキュメント整備を含む。
+in_scope:
+  - "MD-WBS (Markdown-based WBS) の詳細な記法仕様の定義。"
+  - "MD-WBSファイルからMarkwhen形式のタイムラインデータを生成するPowerShellスクリプト (`md-wbs2gantt.ps1` または `md-wbs2markwhen.ps1`) の開発。"
+    - YAMLフロントマター解析機能 (簡易パースフォールバック含む)。
+    - 階層ID付きMarkdown見出しによるWBS構造解析機能。
+    - 1段インデントされたリスト形式での属性（deadline, duration, status, progress, org, assignee, depends, start_date_fixed）の解析機能。
+    - 見出し直後のMarkdown本文を説明文として抽出する機能。
+    - 祝日CSVファイル (公式・会社独自) を参照した、タスクの開始日・終了日の自動計算機能 (逆線表および積算の両方に対応)。
+    - 計算された日付と属性情報をMarkwhenの構文 (section, group, timeline entry, tags, notes) にマッピングして出力する機能。
+    - Markwhen出力時の祝日表示制御機能。
+  - "MD-WBSファイルから既存のExcel WBS/ガントチャートテンプレートへデータを書き込むPowerShellスクリプト (`md-wbs2gantt.ps1` 内の機能、または別スクリプト) の開発。"
+    - Excel COMオブジェクトを利用した指定シート・指定行へのデータ書き込み。
+    - MD-WBSの情報を定義されたExcel列にマッピング。
+    - プロジェクト名、プロジェクト開始日のExcel特定セルへの書き込み。
+  - "既存のExcel WBS/ガントチャートテンプレートからMD-WBSファイルを生成するPowerShellスクリプト (`excel2md-wbs.ps1`) の開発。"
+    - Excel COMオブジェクトを利用したデータ読み取り。
+    - Excelの列情報をMD-WBSの階層構造と属性にマッピング。
+    - Excelの複数パターンでの日付・期間入力（開始日＋日数、終了日＋日数、開始日＋終了日）を解釈し、祝日を考慮してMD-WBSの `deadline` と `duration` (営業日数) に変換するロジック。
+  - "利用者向けドキュメントの作成 (MD-WBS記法マニュアル、スクリプト利用手順など)。"
+  - "開発者向けドキュメントの作成 (本プロジェクト憲章、各スクリプトの詳細設計書、Excelテンプレート仕様書など)。"
+  - "テストスクリプトの作成と主要機能の動作検証。"
+out_of_scope:
+  - "リアルタイム共同編集機能の提供。"
+  - "専用GUIアプリケーションの開発 (VS Code拡張機能の活用はスコープ内)。"
+  - "高度なリソース管理機能 (本格的なリソース割り当て、負荷平準化、コスト計算など)。"
+  - "実績データの詳細な追跡・分析・レポート機能 (ExcelやMD-WBSへの簡易的な実績反映はスコープ内とする場合あり)。"
+  - "PowerShellスクリプトのインストーラーや配布パッケージの作成。"
+  - "他プロジェクト管理ツールとの直接的なデータ連携機能 (CSVやテキストを介した連携は除く)。"
+  - "Excelテンプレート自体の新規作成や大幅なデザイン変更 (既存のテンプレートへのデータ入出力を前提)。"
+
+# 3. Stakeholders
+# ===============
+stakeholders:
+  - role: "プロジェクトマネージャ / プロジェクトリーダー"
+    interest: "マスターWBS・スケジュールの効率的な策定、変更管理、全体進捗の視覚的把握。"
+    primary_tool: "MD-WBS (編集), Markwhen (レビュー), Excel (確認)"
+  - role: "チームメンバー / タスク担当者"
+    interest: "割り当てられたタスクの確認、進捗状況の簡易的な報告、関連情報の参照。"
+    primary_tool: "Excel (進捗入力・確認), Markwhen (参照)"
+  - role: "開発者 (本ツールの)"
+    interest: "明確な仕様に基づいたスクリプト開発、保守性の高いコード作成。"
+    primary_tool: "PowerShell, VS Code, 各種仕様書"
+  - role: "AIアシスタント (Gemini)"
+    interest: "仕様整理、ドキュメント生成、コード生成支援、デバッグ支援。"
+    primary_tool: "対話インターフェース"
+
+# 4. Major Deliverables
+# ======================
+deliverables:
+  - deliverable_id: D01
+    name: "MD-WBS記法仕様書 (`mdwbs_syntax_specification.yaml`)"
+    description: "MD-WBSファイルの正確な構文とルールを定義したドキュメント。"
+  - deliverable_id: D02
+    name: "PowerShellスクリプト: MD-WBSからMarkwhen/Excelへ (`md-wbs2gantt.ps1`)"
+    description: "MD-WBSを読み込み、MarkwhenファイルまたはExcelファイルに出力するスクリプト本体。"
+  - deliverable_id: D03
+    name: "PowerShellスクリプト: ExcelからMD-WBSへ (`excel2md-wbs.ps1`)"
+    description: "Excel WBSを読み込み、MD-WBSファイルを生成するスクリプト本体。"
+  - deliverable_id: D04
+    name: "Excel WBS/ガントチャートテンプレート仕様書 (`excel_template_specification.yaml`)"
+    description: "連携対象のExcelテンプレートの列定義と役割を記述したドキュメント。"
+  - deliverable_id: D05
+    name: "利用者向けマニュアル (`mdwbs_usage_guide.md` およびスクリプト実行手順)"
+    description: "MD-WBSの書き方、スクリプトのセットアップと使用方法を解説したドキュメント。"
+  - deliverable_id: D06
+    name: "サンプルファイル群 (MD-WBS, 祝日CSV, Excelテンプレート, Markwhen出力例)"
+    description: "ツールの使い方を理解するための具体的なサンプルデータ一式。"
+  - deliverable_id: D07
+    name: "テストスクリプト (`test-mdwbs2gantt.ps1` など)"
+    description: "開発したPowerShellスクリプトの主要機能を検証するためのスクリプト。"
+  - deliverable_id: D08
+    name: "本プロジェクト憲章 (`00_project_charter.yaml`)"
+    description: "プロジェクト全体の定義と指針を示す本文書。"
+  - deliverable_id: D09
+    name: "各PowerShellスクリプトの詳細設計書 (YAML形式)"
+    description: "各スクリプトの技術的な仕様を記述したドキュメント。"
+
+# 5. Major Constraints and Assumptions
+# ====================================
+constraints:
+  - constraint_id: C01
+    description: "全てのツールとデータはローカル環境で動作・保存されること (SaaS利用不可)。"
+  - constraint_id: C02
+    description: "特定の有償パッケージソフトウェア (Microsoft Project等) の購入は不要であること。"
+  - constraint_id: C03
+    description: "主要なスクリプト言語はPowerShell (v7.0+) とし、外部モジュールの利用は最小限または手動配置可能なものに限定する (`ConvertFrom-Yaml` の扱いは例外的に考慮)。"
+  - constraint_id: C04
+    description: "Excel連携はローカルにExcelアプリケーションがインストールされていることを前提としたCOMオブジェクト経由とする。"
+  - constraint_id: C05
+    description: "MD-WBSのパースロジックは、定義された記法に厳密に従うものとし、過度に複雑な自然言語解釈などは行わない。"
+assumptions:
+  - assumption_id: A01
+    description: "利用者は基本的なMarkdownの知識と、PowerShellスクリプトを実行できる環境を持つ。"
+  - assumption_id: A02
+    description: "VS Codeと関連拡張機能 (Markmap, Markwhen) の利用が推奨されるが、必須ではない (テキストエディタとPowerShellがあればコア機能は利用可能)。"
+  - assumption_id: A03
+    description: "提供されるExcelテンプレートは、定義された列構造を基本とする。"
+  - assumption_id: A04
+    description: "祝日データは正確なCSVファイルとして提供される。"
+
+# 6. Success Criteria (High-Level)
+# =================================
+success_criteria:
+  - criterion_id: SC01
+    description: "定義されたMD-WBS記法で記述されたファイルから、論理的に矛盾の少ないMarkwhenタイムラインが正しく生成されること。"
+  - criterion_id: SC02
+    description: "定義されたMD-WBS記法で記述されたファイルから、指定されたExcelテンプレートの該当列にWBS情報が正しく書き込まれること。"
+  - criterion_id: SC03
+    description: "指定されたExcelテンプレートから、定義されたMD-WBS記法に従ったファイルが正しく生成されること（特に日付と期間の変換ロジックの妥当性）。"
+  - criterion_id: SC04
+    description: "提供されるマニュアルとサンプルにより、利用者がツールの基本的な使い方を理解し、運用を開始できること。"
+  - criterion_id: SC05
+    description: "開発されたスクリプトは、定義されたコーディング規則に従い、一定の可読性と保守性を有すること。"
+
+# 7. Project Management (High-Level)
+# ==================================
+# project_manager: "(担当者名)"
+# key_milestones:
+#   - milestone: "MD-WBS記法最終化"
+#     target_date: "YYYY-MM-DD"
+#   - milestone: "md-wbs2gantt.ps1 (Markwhen出力) プロトタイプ完成"
+#     target_date: "YYYY-MM-DD"
+#   - milestone: "md-wbs2gantt.ps1 (Excel出力) プロトタイプ完成"
+#     target_date: "YYYY-MM-DD"
+#   - milestone: "excel2md-wbs.ps1 プロトタイプ完成"
+#     target_date: "YYYY-MM-DD"
+#   - milestone: "ドキュメント一式完成とテスト完了"
+#     target_date: "YYYY-MM-DD"

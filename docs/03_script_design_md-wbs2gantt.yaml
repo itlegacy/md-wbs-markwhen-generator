@@ -1,0 +1,273 @@
+# 詳細設計書 (コード設計書): md-wbs2gantt.ps1 - (Final Version Reflecting All Discussions)
+
+script_information:
+  name: "md-wbs2gantt.ps1"
+  version: "3.7" # 更新: モジュール化、出力形式修正、スケジュールロジック改良を反映
+  creation_date: "2025-05-17"
+  last_updated_date: "2025-05-25" # 更新
+  created_by: "AI Assistant (Gemini) based on iterative user feedback and code generation"
+  target_powershell_version: "7.0 (YAMLフロントマターの厳密な解析には7.3+またはpowershell-yamlモジュール推奨, Excel COM操作のためExcelインストール環境が必要)"
+  description: |
+    階層ID付き見出しと属性リストを用いた拡張MD-WBSファイル (仕様v6.2準拠) を解析し、
+    タスクのスケジュール（開始日・終了日）を計算（土日祝除外、start_date_fixed優先の順線表またはdeadline優先の逆線表）して、
+    Markwhen形式のタイムラインデータ、または定義された列構成で既存のExcelガントチャートシートへのWBSデータ書き込みを行う。
+    共通関数は MyCommonFunctions モジュールからインポートして使用する。
+
+purpose: |
+  ローカル環境で完結するテキストベースのプロジェクト計画立案と、スケジュール情報の視覚化・共有を支援する。
+  VS Code と連携し、構造化されたMD-WBS から表現力豊かなMarkwhenタイムライン、または
+  指定されたExcelシートへのWBSデータ出力を自動化する。
+
+input_parameters: # Based on the last provided script's param block
+  - name: "WbsFilePath"
+    type: "string"
+    mandatory: true
+    description: "拡張MD-WBSデータが記述されたMarkdownファイルのパス。"
+  - name: "OfficialHolidayFilePath"
+    type: "string"
+    mandatory: true
+    description: "国民の祝日などが記載されたCSVファイルのパス。"
+  - name: "CompanyHolidayFilePath"
+    type: "string"
+    mandatory: false
+    description: "会社独自の休日が記載されたCSVファイルのパス（任意）。"
+  - name: "OutputFilePath"
+    type: "string"
+    mandatory: true
+    description: "生成されるMarkwhenデータまたは書き込み対象のExcelファイルのパス。"
+  - name: "OutputFormat"
+    type: "string"
+    mandatory: true
+    validation: "Markwhen, ExcelDirect"
+    default_value: "Markwhen"
+    description: "出力形式。『Markwhen』または『ExcelDirect』を指定。"
+  - name: "DateFormatPattern"
+    type: "string"
+    mandatory: false
+    default_value: "yyyy/MM/dd"
+    description: "スクリプト内部やMarkwhenのフロントマターdate等で使用する日付のデフォルト書式。Markwhenのタイムライン日付は'yyyy-MM-dd'固定、Excel日付はExcelDateFormatパラメータで指定。"
+  - name: "DefaultEncoding"
+    type: "string"
+    mandatory: false
+    default_value: "UTF8"
+    description: "MD-WBS入力ファイルおよび祝日CSVのデフォルトエンコーディング。Markwhen出力はUTF8NoBOM。"
+  - name: "MarkwhenHolidayDisplayMode" # Markwhen専用パラメータ
+    type: "string"
+    mandatory: false
+    validation: "InRange, All, None"
+    default_value: "InRange"
+    description: "Markwhen出力時の祝日表示モード。"
+  - name: "ExcelSheetNameOrIndex" # ExcelDirect専用パラメータ
+    type: "object"
+    mandatory: false
+    default_value: 1 # Default to the first sheet
+    description: "ExcelDirect出力時に使用する対象ワークシートの名前またはインデックス。"
+  - name: "ExcelStartRow" # ExcelDirect専用パラメータ
+    type: "int"
+    mandatory: false
+    default_value: 5
+    description: "ExcelDirect出力時にWBSデータの書き込みを開始する行番号。"
+
+output_specifications: # (As defined in Project Charter and refined through discussion)
+  markwhen_output:
+    file_path: "`OutputFilePath` パラメータで指定されたパス (.mw)"
+    encoding: "UTF8NoBOM"
+    front_matter:
+      title: "MD-WBSの `title` 属性"
+      description: "MD-WBSの `description` 属性"
+      date: "MD-WBSの `date` 属性 (yyyy-MM-dd形式)"
+      view: "MD-WBSの `view` 属性 (なければ 'month')"
+    timeline_entry_format: "`yyyy-MM-dd/yyyy-MM-dd: タスク名 (進捗%) #IDタグ #statusタグ #assigneeタグ #orgタグ`" # 修正: 正しい区切り文字と日付形式
+    notes_format: "`// 説明文` (タスクエントリの次の行にインデントして表示)"
+    holiday_section: "`MarkwhenHolidayDisplayMode` に基づき、ファイルの最後に祝日セクションを生成（日付形式は `yyyy-MM-dd`）。"
+  excel_direct_output:
+    file_path: "`OutputFilePath` パラメータで指定されたパス (.xlsx、既存ファイルへの書き込み)"
+    target_sheet: "`ExcelSheetNameOrIndex` パラメータで指定されたシート"
+    start_row: "`ExcelStartRow` パラメータで指定された行からデータ書き込み開始"
+    column_mapping: # 01_requirements_definition.yaml の確定版と一致させる
+      - excel_column: "A"
+        mdwbs_source_description: "タスクID"
+        script_value: "$Element.Id"
+      - excel_column: "B"
+        mdwbs_source_description: "大分類 (Level 2 要素名)"
+        script_value: "$Element.Name (if Level 2)"
+      - excel_column: "C"
+        mdwbs_source_description: "中分類 (Level 3 要素名)"
+        script_value: "$Element.Name (if Level 3)"
+      - excel_column: "D"
+        mdwbs_source_description: "タスク名称 (Level 4+ 要素名)"
+        script_value: "$Element.Name (if Level 4+)"
+      - excel_column: "E"
+        mdwbs_source_description: "先行後続 (先行有無)"
+        script_value: "if $Element.Attributes.depends: '先行' else ''"
+      - excel_column: "F"
+        mdwbs_source_description: "関連番号 (先行ID)"
+        script_value: "$Element.Attributes.depends"
+      - excel_column: "G"
+        mdwbs_source_description: "先行後続タスク名"
+        script_value: "先行タスク名 (ルックアップ)"
+      - excel_column: "I"
+        mdwbs_source_description: "アクションプラン (説明)"
+        script_value: "$Element.DescriptionText"
+      - excel_column: "N"
+        mdwbs_source_description: "担当組織"
+        script_value: "$Element.Attributes.org"
+      - excel_column: "O"
+        mdwbs_source_description: "担当者"
+        script_value: "$Element.Attributes.assignee"
+      - excel_column: "R"
+        mdwbs_source_description: "開始入力 (タスク開始可能日)"
+        script_value: "$Element.Attributes.start_date_fixed or $Element.CalculatedStartDate"
+      - excel_column: "S"
+        mdwbs_source_description: "終了入力 (締切日)"
+        script_value: "$Element.Deadline or $Element.CalculatedEndDate" # Deadlineが主、なければCalculatedEndDate
+      - excel_column: "T"
+        mdwbs_source_description: "日数入力 (カレンダー日数)"
+        script_value: "空白 (MD-WBS durationは実営業日数。参考としてAA列に出力)"
+      - excel_column: "X"
+        mdwbs_source_description: "進捗率 (0.0-1.0)"
+        script_value: "$Element.Attributes.progress を数値化"
+      - excel_column: "Y"
+        mdwbs_source_description: "開始実績"
+        script_value: "status属性とCalculatedStartDateから導出 (例: inprogress/completed なら CalculatedStartDate)"
+      - excel_column: "Z"
+        mdwbs_source_description: "終了実績"
+        script_value: "status属性とCalculatedEndDateから導出 (例: completed なら CalculatedEndDate)"
+      - excel_column: "AA"
+        mdwbs_source_description: "(参考) 実営業日数"
+        script_value: "$Element.DurationDays"
+    specific_cell_writes:
+      - cell: "D1"
+        value: "$projectMetadata.Title"
+      - cell: "O1"
+        value: "計算されたプロジェクト全体の開始日 (または $projectMetadata.ProjectPlanStartDate)"
+
+main_processing_flow: # Reflects the last provided script's logic
+  - step: "Initialization"
+    action: "Set StrictMode, ErrorActionPreference. Initialize script-scoped variables. Import MyCommonFunctions module." # 更新
+  - step: "Input Parameter Validation"
+    action: "Check existence of WbsFilePath, OfficialHolidayFilePath. Warn if CompanyHolidayFilePath is specified but not found. Create output directory if not exists." # 追加・明確化
+  - step: "Pre-emptive Excel Process Stop (ExcelDirect Only) - Via Module"
+    action: "Call `Stop-ExcelProcesses` function (from MyCommonFunctions module)." # 更新
+    condition: "$OutputFormat -eq 'ExcelDirect'"
+  - step: "Load Holidays - Via Module"
+    action: "Call `Import-HolidayList` (from MyCommonFunctions module) to load and merge official and company holidays." # 更新
+    outputs: "`$script:Holidays` (List of [datetime] objects)."
+  - step: "Parse MD-WBS"
+    action: "Call `Parse-WbsMarkdownAndMetadataAdvanced` to parse the WBS file. Handles YAML front matter (with fallback) and Markdown body to build WbsElementNode tree and ProjectMetadata object." # 更新
+    outputs: "`$projectMetadata` (ProjectMetadata object), `$rootWbsElements` (List of WbsElementNode for tree roots)."
+  - step: "Flatten WBS Tree for Date Calculation"
+    action: "Call `Flatten-WbsTreeNodes` to create a flat list (`$script:AllTaskNodesFlatList`) of WbsElementNodes that require date calculations (have DurationDays and Deadline/start_date_fixed)." # 更新
+  - step: "Calculate Task Dates (Schedule Calculation)" # 更新
+    action: |
+      Iterate through `$script:AllTaskNodesFlatList`. For each node, determine calculation method based on `start_date_fixed`, `deadline`, and `duration` attributes (as per `02_mdwbs_syntax_specification.yaml`).
+      Call appropriate date calculation functions (e.g., `Measure-TaskStartDate`, `Measure-TaskEndDate` - potentially from `MyCommonFunctions` or internal helpers) to calculate and store `CalculatedStartDate` and `CalculatedEndDate`.
+      Prioritize `start_date_fixed` for forward scheduling if present. Otherwise, use `deadline` and `duration` for backward scheduling (default).
+  - step: "Determine Overall Project Date Range"
+    action: "Determine the overall project start and end dates using `$projectMetadata` and calculated task dates, for holiday filtering in Markwhen and O1 cell in Excel."
+  - step: "Validate Dependencies"
+    action: "Call `Validate-TaskDependencies` using `$script:AllTaskNodesFlatList` to check for logical inconsistencies."
+    outputs: "`$dependencyWarnings` (List of [string])."
+  - step: "Generate Output based on Format"
+    action: "Branch based on `$OutputFormat`."
+    branches:
+      - condition: "$OutputFormat -eq 'Markwhen'"
+        action: |
+          Call `Format-GanttMarkwhen` with `$projectMetadata`, `$rootWbsElements`, holidays, Markwhen-specific date pattern ('yyyy-MM-dd'),
+          overall project dates for holiday filter, and holiday display mode.
+          Write the returned Markwhen string to `$OutputFilePath` using UTF8NoBOM encoding.
+      - condition: "$OutputFormat -eq 'ExcelDirect'"
+        action: |
+          Determine `$excelDatePatternToUse` based on `$DateFormatPattern`.
+          Call `Write-WbsToExcelCom` with `$projectMetadata` (as `$ProjectInfo`), `$rootWbsElements`,
+          `$script:AllTaskNodesFlatList` (for lookups), Excel file path, sheet identifier, start row,
+          and `$excelDatePatternToUse`.
+  - step: "Final Reporting"
+    action: "Display success message and any dependency warnings."
+  - step: "Cleanup (Finally Block)"
+    action: "Remove script-scoped variables. COM objects are released within Write-WbsToExcelCom's finally block." # 更新
+
+internal_data_structures: # (As defined in the last script version)
+  ProjectMetadata_Class: { name: "ProjectMetadata", properties: "Title, Description, DefinedDate, ProjectPlanStartDate, ProjectPlanOverallDeadline, View" }
+  WbsElementNode_Class: { name: "WbsElementNode", properties: "Id, Name, HierarchyLevel, ElementType, Attributes, DescriptionText, Deadline, DurationDays, CalculatedStartDate, CalculatedEndDate, Children, Parent, RawAttributeLines", methods: "AddRawAttributeLine, ParseCollectedAttributes" }
+  HolidayList_Type: "[System.Collections.Generic.List[datetime]]"
+
+key_functions_design: # Reflects the structure and core logic of the last provided script
+  - function_name: "Import-HolidayList"
+    description: "Loads and merges holiday dates. (Imported from MyCommonFunctions module)" # 更新
+  - function_name: "Stop-ExcelProcesses"
+    description: "Attempts to stop running EXCEL.EXE processes. (Imported from MyCommonFunctions module)" # 更新
+  - function_name: "Parse-WbsMarkdownAndMetadataAdvanced"
+    description: "Parses MD-WBS file (YAML front matter with fallback, Markdown body) to build WbsElementNode tree and ProjectMetadata."
+    # (Inputs, Outputs, Core Logic - 変更なし)
+  - function_name: "WbsElementNode.ParseCollectedAttributes" # Method of WbsElementNode class
+    description: "Parses raw attribute lines for a WbsElementNode."
+    # (Logic - 変更なし)
+  - function_name: "Measure-TaskStartDate" # またはCalculate-TaskStartDate
+    description: "Calculates task start date. (Imported from MyCommonFunctions module or internal if specific logic remains, considering start_date_fixed)" # 更新
+  - function_name: "Measure-TaskEndDate" # またはCalculate-TaskEndDate
+    description: "Calculates task end date. (Imported from MyCommonFunctions module or internal if specific logic remains, considering start_date_fixed)" # 更新
+  - function_name: "Format-GanttMarkwhen"
+    description: "Generates Markwhen formatted text from the parsed WBS data and project metadata."
+    core_logic: | # 更新: 正しい日付形式と区切り文字を反映
+      - Outputs YAML front matter (title, description, date (yyyy-MM-dd), view).
+      - Nested recursive helper `ConvertTo-MarkwhenRecursiveUpdated`:
+        - Outputs `section ... endsection`.
+        - Outputs `group "Name" ... endgroup`.
+        - Outputs timeline entries (`yyyy-MM-dd/yyyy-MM-dd: Name (Progress%) #ID #Status ...`). Dates formatted with `yyyy-MM-dd`.
+        - Handles indentation.
+        - Outputs DescriptionText as Markwhen notes (`// ...`).
+      - Outputs "祝日" section with dates formatted as `yyyy-MM-dd`.
+  - function_name: "Write-WbsToExcelCom"
+    description: "Writes WBS data to an Excel file using COM objects."
+    param_block: # ★★★ パラメータ定義を実際のコードと完全に一致させる ★★★
+        - "[ProjectMetadata]$ProjectMetadata"
+        - "[System.Collections.Generic.List[WbsElementNode]]$RootWbsElements"
+        - "[System.Collections.Generic.List[WbsElementNode]]$AllTaskNodesFlatListForDateLookup"
+        - "[string]$TargetExcelFilePath"
+        - "[object]$ExcelSheetNameOrIndex = 1"
+        - "[int]$StartRow = 5"
+        - "[string]$ExcelDateFormat = 'yyyy/MM/dd'"
+    core_logic: | # 更新: 正しい列マッピングとCOMオブジェクト初期化・解放を反映
+      - Initializes Excel COM object (`$excel`), opens/creates workbook (`$workbook`), selects/creates worksheet (`$worksheet`) within the function's `try` block.
+      - Writes `$ProjectMetadata.Title` to D1 and calculated overall project start date (or `$ProjectMetadata.ProjectPlanStartDate`) to O1.
+      - Nested recursive helper `Add-RowToExcelRecursiveDetailed`:
+        - Writes WbsElementNode properties to Excel columns according to the **finalized column mapping** (as per `output_specifications.excel_direct_output.column_mapping`).
+      - Saves workbook (`$workbook.SaveAs()`). Closes workbook, quits Excel application.
+      - **Crucially, all COM objects (`$worksheet`, `$workbook`, `$excel`) are released in a `finally` block within this function using `[System.Runtime.InteropServices.Marshal]::ReleaseComObject()` and setting variables to `$null`.**
+  - function_name: "Add-RowToExcelRecursiveDetailed" # Helper within Write-WbsToExcelCom
+    param_block: # ★★★ パラメータ定義を実際のコードと完全に一致させる ★★★
+        - "[object]$Element" # WbsElementNode
+        - "[object]$CurrentWorksheet" # Excel Worksheet COM Object
+        - "[string]$ExcelDateFormat"
+        - "[System.Collections.Generic.List[WbsElementNode]]$AllTasksForNameLookup"
+        - "[int]$recursionCount"
+    description: "Recursively writes WBS element data to Excel rows according to the finalized column mapping."
+  - function_name: "Validate-TaskDependencies"
+    description: "Checks for logical inconsistencies in task dependencies."
+    # (Logic - 変更なし)
+  - function_name: "Flatten-WbsTreeNodes" # Helper
+    description: "Creates a flat list of WbsElementNodes from the tree."
+    # (Logic - 変更なし)
+
+error_handling: # 更新
+  - strategy: "Set `$ErrorActionPreference = \"Stop\"` globally."
+  - strategy: "`try-catch-finally` blocks for all critical operations (file I/O, COM interactions, complex parsing)."
+  - strategy: "Informative `Write-Warning` for non-critical issues, `Write-Error` for script-terminating issues (without `-ForegroundColor`)."
+  - strategy: "COM objects are meticulously released in `finally` blocks of the function where they are created/used (`Write-WbsToExcelCom`)."
+
+file_encoding_considerations: # 変更なし
+  input_mdwbs: "Assumed to be UTF-8, configurable via `$DefaultEncoding`."
+  input_holidays_csv: "Reads using `$DefaultEncoding`, with Shift_JIS fallback. Handles UTF-8 BOM."
+  output_markwhen: "Hardcoded to UTF8NoBOM."
+  output_excel: "Handled by Excel COM object."
+
+assumptions_and_constraints: # 更新
+  - "PowerShell version 7.0 or higher."
+  - "Microsoft Excel application installed locally for `ExcelDirect` output."
+  - "`ConvertFrom-Yaml` availability (PS 7.3+ or module) checked, with YAML parsing fallback."
+  - "MD-WBS files adhere to defined syntax (as per `02_mdwbs_syntax_specification.yaml`)."
+  - "Excel template for `ExcelDirect` exists and is writable if `OutputFilePath` points to an existing file. If file does not exist, it's created."
+  - "Markwhen output indentation uses 4 spaces per level."
+  - "Dependency checking provides warnings, no auto-rescheduling."
+  - "Common functions (`Import-HolidayList`, `Stop-ExcelProcesses`, `Measure-TaskStartDate`, `Measure-TaskEndDate`) are available via `MyCommonFunctions` module." # 追加

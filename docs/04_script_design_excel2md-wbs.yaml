@@ -1,0 +1,195 @@
+# 詳細設計書 (コード設計書): excel2md-wbs.ps1
+# Version: 1.1 (Reflecting detailed Excel column mapping and scheduling intent interpretation)
+# Date: 2025-05-25 (仮)
+
+script_information:
+  name: "excel2md-wbs.ps1"
+  version: "1.1" # 更新
+  creation_date: "2025-05-17" # 初版の日付はそのまま
+  last_updated_date: "2025-05-25" # 更新
+  created_by: "AI Assistant (Gemini) based on user requirements and iterative feedback"
+  target_powershell_version: "7.0 (Excel COM操作のため、Excelインストール環境が必要)"
+  description: |
+    定義された列構成を持つExcelベースのWBS/ガントチャートから、階層ID付き見出しと属性リストを用いた
+    MD-WBSファイル (仕様v6.2準拠) を自動生成する。
+    ExcelのR列(開始入力), S列(終了入力), T列(日数入力-カレンダー日数)の入力パターンからユーザーの
+    スケジュール計算意図（順線表/逆線表）を推定し、祝日を考慮してMD-WBSの適切な日付属性
+    (`deadline`, `duration`(実営業日数), `start_date_fixed`) を導出する。
+    共通関数は MyCommonFunctions モジュールからインポートして使用する。
+
+purpose: |
+  Excelで初期入力・管理されているWBS情報を、より柔軟な編集・構造化が可能なMD-WBS形式に変換することで、
+  テキストベースのプロジェクト管理プロセスへの移行を支援する。
+
+input_parameters: # 実際の excel2md-wbs.ps1 の param ブロックと一致させる
+  - name: "ExcelFilePath"
+    type: "string"
+    mandatory: true
+    description: "入力するExcelファイル (.xlsx) のフルパス。"
+  - name: "OfficialHolidayFilePath"
+    type: "string"
+    mandatory: true
+    description: "国民の祝日などが記載されたCSVファイルのパス（祝日計算に使用）。"
+  - name: "CompanyHolidayFilePath"
+    type: "string"
+    mandatory: false
+    description: "会社独自の休日が記載されたCSVファイルのパス（任意、祝日計算に使用）。"
+  - name: "OutputMdWbsFilePath"
+    type: "string"
+    mandatory: true
+    description: "生成されるMD-WBSファイル (.md) のフルパス。"
+  - name: "SheetIdentifier"
+    type: "object" # シート名(string) または インデックス(int, 1始まり)
+    mandatory: false
+    default_value: 1
+    description: "処理対象のExcelワークシートの名前またはインデックス。"
+  - name: "DataStartRow"
+    type: "int"
+    mandatory: false
+    default_value: 5 # `01_requirements_definition.yaml` のExcelテンプレート仕様と合わせる
+    description: "Excelシート内のWBSデータが開始する行番号。"
+  - name: "ExcelProjectNameCell" # `01_requirements_definition.yaml` と合わせる
+    type: "string"
+    mandatory: false
+    default_value: "D1" # (仮、実際のテンプレートに合わせて調整)
+    description: "プロジェクト名が記載されているExcelセル番地 (MD-WBSのtitleに使用)。"
+  - name: "ExcelProjectStartDateCell" # `01_requirements_definition.yaml` と合わせる
+    type: "string"
+    mandatory: false
+    default_value: "O1" # (仮、実際のテンプレートに合わせて調整)
+    description: "プロジェクト全体の計画開始日が記載されているExcelセル番地 (MD-WBSのprojectstartdateに使用)。"
+  - name: "OutputMdWbsEncoding"
+    type: "string"
+    mandatory: false
+    default_value: "UTF8NoBOM"
+    description: "出力MD-WBSファイルのエンコーディング。"
+  - name: "HolidayCsvEncoding"
+    type: "string"
+    mandatory: false
+    default_value: "UTF8"
+    description: "祝日CSVファイルを読み込む際のデフォルトエンコーディング。"
+
+input_excel_column_mapping: # ★新規追加セクション★ Excelのどの列から何の情報を読み取るかの定義
+  id_column: "A" # タスクID
+  name_columns: ["B", "C", "D"] # 大分類, 中分類, タスク名称 (階層的に使用)
+  dependency_flag_column: "E" # 先行後続フラグ ("先行"など) - 主に情報として
+  dependency_id_column: "F" # 関連番号 (先行タスクIDとして解釈)
+  dependency_name_column: "G" # 先行後続タスク名 - 主に情報として
+  description_column: "I" # アクションプラン (説明)
+  org_column: "N" # 担当組織
+  assignee_column: "O" # 担当者
+  # Q列 (最終更新) はユーザー手入力用なので、MD-WBS生成時には読み取らない (または読み取っても使用しない)
+  start_date_input_column: "R" # 開始入力 (タスク開始可能日)
+  end_date_input_column: "S" # 終了入力 (締切日)
+  calendar_duration_input_column: "T" # 日数入力 (カレンダー日数)
+  progress_column: "X" # 進捗率 (0.0-1.0 または %)
+  actual_start_date_column: "Y" # 開始実績
+  actual_end_date_column: "Z" # 終了実績
+
+output_specifications: # MD-WBSファイル
+  file_path: "`OutputMdWbsFilePath` パラメータで指定されたパス"
+  format: "Markdownテキスト形式 (MD-WBS Syntax Specification v6.2 に準拠)"
+  encoding: "`OutputMdWbsEncoding` パラメータで指定されたエンコーディング"
+  yaml_front_matter:
+    title: "Excel `ExcelProjectNameCell` の値"
+    description: "(固定値またはExcelから取得するなら別途定義)"
+    date: "スクリプト実行日 (YYYY-MM-DD)"
+    projectstartdate: "Excel `ExcelProjectStartDateCell` の値 (あれば)"
+    projectoveralldeadline: "全タスクの `deadline` の最大値から設定 (スクリプトが計算)"
+    view: "month (固定値、または将来的に設定可能に)"
+    # calculation_engine_default: (Excelからの変換では設定しないか、Excel側に指定があればそれを反映)
+  md_wbs_body:
+    hierarchy: "ExcelのA,B,C,D列のIDと名称入力位置からMarkdown見出しレベルを決定。"
+    attributes:
+      - "deadline (YYYY-MM-DD): ExcelのR,S,T列の解釈結果から設定。"
+      - "duration (Xd形式、実営業日数): ExcelのR,S,T列の解釈結果から、祝日を考慮して計算・設定。"
+      - "start_date_fixed (YYYY-MM-DD, 任意): ExcelのR,S,T列の解釈結果から設定。"
+      - "status: ExcelのY,Z列(実績日)から導出 ('pending', 'inprogress', 'completed')。"
+      - "progress: ExcelのX列(進捗率)から設定 (例: 50%)。"
+      - "org: ExcelのN列(担当組織)から設定。"
+      - "assignee: ExcelのO列(担当者)から設定。"
+      - "depends: ExcelのF列(関連番号)から設定 (先行タスクIDとして)。"
+    description_text: "ExcelのI列(アクションプラン)の内容をMarkdown本文として設定。"
+
+main_processing_flow:
+  - step: 1
+    action: "パラメータ検証とスクリプトスコープ変数初期設定。"
+    details: "`$script:Holidays`, `$script:MdWbsDateFormat` ('yyyy-MM-dd') など。"
+  - step: 1.1
+    action: "既存Excelプロセスの終了試行 (`Stop-ExcelProcesses` from MyCommonFunctions module)。"
+  - step: 2
+    action: "祝日リストの読み込み (`Import-HolidayList` from MyCommonFunctions module)。"
+  - step: 3
+    action: "Excelファイルのオープンとプロジェクトメタ情報の読み取り (COMオブジェクト経由)。"
+    details: |
+      - Excel COMオブジェクトを生成。
+      - `ExcelFilePath` で指定されたファイルを開き、`SheetIdentifier` で対象ワークシートを選択。
+      - `ExcelProjectNameCell` からプロジェクト名を読み取り、`MdProjectMetadata.Title` に設定。
+      - `ExcelProjectStartDateCell` からプロジェクト全体の計画開始日を読み取り、`MdProjectMetadata.ProjectPlanStartDate` に設定。
+      - `MdProjectMetadata.DefinedDate` にスクリプト実行日を設定。
+  - step: 4
+    action: "Excel WBSデータの解析とMD-WBS要素ツリーへの変換 (`Convert-ExcelDataToMdWbsTree` 関数)。"
+    details: |
+      - Excelの `DataStartRow` から最終行までをループ処理。
+      - 各行のデータを `input_excel_column_mapping` に基づいて読み取る。
+      - A,B,C,D列から階層ID、要素名、レベルを判定し、`MdWbsOutputElement` オブジェクトを生成しツリー構造を構築。
+      - ExcelのR,S,T列の値と祝日リストに基づき、`01_requirements_definition.yaml` の `excel_integration.excel_to_md_wbs.date_interpretation_logic` に従って、MD-WBS用の `deadline`, `duration` (実営業日数), `start_date_fixed` 属性を計算・設定。この際、MyCommonFunctionsモジュールの `Measure-BusinessDaysBetween` や `Measure-TargetEndDateFromStartAndDuration` (または類似の自作関数) を利用する。
+      - N,O,F,X,Y,Z列から他の属性 (`org`, `assignee`, `depends`, `progress`, `status`) を設定。
+      - I列から説明文を設定。
+  - step: 5
+    action: "プロジェクト全体の最終締切日の計算 (`MdProjectMetadata` の更新)。"
+    details: "変換された全WBS要素の `deadline` 属性の最大値を取得し、`$mdProjectMetadata.ProjectPlanOverallDeadline` に設定。"
+  - step: 6
+    action: "MD-WBSテキストデータの生成 (`Format-MdWbsFromElements` 関数)。"
+    details: "構築された `MdProjectMetadata` と `MdWbsOutputElement` ツリーから、MD-WBS仕様に従ったMarkdown文字列を生成。"
+  - step: 7
+    action: "出力ファイルへの書き込み (`Set-Content`)。"
+  - step: 8
+    action: "Excel COMオブジェクトの解放と処理結果表示。"
+
+internal_data_structures: # (md-wbs2gantt.ps1と共通化できるものは共通理解で)
+  MdProjectMetadata_Class: { name: "MdProjectMetadata", properties: "Title, Description, DefinedDate, ProjectPlanStartDate, ProjectPlanOverallDeadline, View" }
+  MdWbsOutputElement_Class: { name: "MdWbsOutputElement", properties: "Id, Name, HierarchyLevel, Attributes (Hashtable), DescriptionText, Children" }
+
+key_functions_design:
+  - function_name: "Import-HolidayList"
+    description: "祝日CSVファイルを読み込む。(Imported from MyCommonFunctions module)"
+  - function_name: "Stop-ExcelProcesses"
+    description: "既存のExcelプロセスを終了試行。(Imported from MyCommonFunctions module)"
+  - function_name: "Measure-BusinessDaysBetween" # MyCommonFunctions にある想定
+    description: "指定された開始日と終了日の間の営業日数（土日祝を除く）を計算する。"
+  - function_name: "Measure-TargetEndDateFromStartAndDuration" # MyCommonFunctions にある想定
+    description: "指定された開始日と営業日数から、土日祝を考慮して実際の終了日を計算する。"
+  - function_name: "Convert-ExcelDataToMdWbsTree"
+    description: "ExcelワークシートからWBSデータを読み取り、MdWbsOutputElementのツリー構造に変換する。"
+    inputs: "[object]$Worksheet (COM)", "[int]$StartDataRow", "[System.Collections.Generic.List[datetime]]$Holidays"
+    outputs: "[System.Collections.Generic.List[MdWbsOutputElement]]" # ルート要素のリスト
+    core_logic: |
+      - Excelの指定開始行から1行ずつ処理。
+      - `input_excel_column_mapping` に基づき各セルから値を読み取り。
+      - 階層判定と `MdWbsOutputElement` 生成。
+      - **日付・期間解釈**: `01_requirements_definition.yaml` の `excel_integration.excel_to_md_wbs.date_interpretation_logic` の優先順位に従い、R,S,T列の値を解釈。
+        - カレンダー日数(T列)と開始日(R列)または終了日(S列)から、実営業日数(`duration`)を計算 (祝日考慮)。
+        - `deadline` または `start_date_fixed` を設定。
+        - 未入力・曖昧な場合はデフォルト解釈（逆線表優先）または警告。
+      - その他属性 (`org`, `assignee`, `depends`, `progress`, `status`) および説明文をマッピング。
+  - function_name: "Format-MdWbsFromElements"
+    description: "MdProjectMetadataとMdWbsOutputElementツリーからMD-WBS形式のMarkdown文字列を生成する。"
+    # (core_logic は md-wbs2gantt.ps1 の設計と類似するが、YAMLフロントマターの calculation_engine_default の扱いなどを考慮)
+
+error_handling:
+  - strategy: "`$ErrorActionPreference = \"Stop\"` グローバル設定。"
+  - strategy: "`try-catch-finally` でCOM操作やファイルI/Oを保護。"
+  - strategy: "Excelからのデータ読み取り時、予期せぬデータ型や欠損値に対する `Write-Warning` とフォールバック処理。"
+  - strategy: "COMオブジェクトの厳密な解放を `finally` で行う。"
+
+file_encoding_considerations:
+  input_excel: "COM経由のためExcelアプリケーション依存。"
+  input_holidays_csv: "`HolidayCsvEncoding` パラメータで指定。"
+  output_mdwbs: "`OutputMdWbsEncoding` パラメータで指定。"
+
+assumptions_and_constraints:
+  - "実行環境にExcelアプリケーションがインストールされていること。"
+  - "入力Excelファイルは `input_excel_column_mapping` に定義された列構造にある程度従っていること。"
+  - "日付関連の列（R,S,T）の解釈は `date_interpretation_logic` に従う。"
+  - "共通関数は `MyCommonFunctions` モジュールから提供される。"

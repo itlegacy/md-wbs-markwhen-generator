@@ -1,13 +1,14 @@
-# MD-WBS to Markwhen Generator (md-wbs-markwhen-generator)
+# MD-WBS Markwhen/Excel Generator
 
-Markmap形式に対応した独自のWBS書式（MD-WBS）のWBSをMarkwhen(.mw)に変換するPowerShellスクリプト
+Markmap形式に対応した独自のWBS書式（MD-WBS）のWBSをMarkwhen(.mw)またはExcelに変換したり、ExcelからMD-WBSを生成したりするPowerShellスクリプト群です。
 
 ## 1. 概要
 
-`md-wbs-markwhen-generator` は、特定のMarkdown形式で記述されたWBS（作業分解構成図）ファイルと祝日リストCSVから、[Markwhen](https://markwhen.com/) 形式のタイムラインデータを生成するPowerShellスクリプトです。
+このプロジェクトは、特定のMarkdown形式で記述されたWBS（作業分解構成図）ファイルと祝日リストCSVから、Markwhen 形式のタイムラインデータやExcel形式のガントチャートデータを生成するためのPowerShellスクリプト群を提供します。また、ExcelファイルからMD-WBSファイルを生成する機能も備えています。
 
 このツールは、以下の特徴を持つプロジェクト計画の作成と視覚化を支援します。
 
+* **双方向Excel連携:** MD-WBSからExcelへのエクスポート、ExcelからMD-WBSへのインポートが可能です。
 * **ローカル環境完結:** 社外秘情報も安全に取り扱えます。
 * **テキストベース管理:** MD-WBSファイル（Markdown）と祝日リスト（CSV）はプレーンテキストで管理でき、Gitなどのバージョン管理システムとの親和性が高いです。
 * **逆線表対応:** 各タスクの締切日（`deadline`）と所要営業日数（`duration`）から、土日祝を除外して自動的に開始日と終了日を計算します。
@@ -15,7 +16,7 @@ Markmap形式に対応した独自のWBS書式（MD-WBS）のWBSをMarkwhen(.mw)
 * **Markmap連携:** MD-WBSファイルはMarkdownの見出しベースのため、[Markmap](https://markmap.js.org/) ツール（VS Code拡張機能など）でWBSの構造をマインドマップとして視覚化できます。
 * **VS Code中心のワークフロー:** テキスト編集、スクリプト実行、Markwhen/Markmapでの表示確認など、多くの作業をVisual Studio Code内で完結できます。
 
-## 2. プロジェクト`フォルダ`構成
+## 2. プロジェクトフォルダ構成
 
 ```plaintext
 md-wbs-markwhen-generator/

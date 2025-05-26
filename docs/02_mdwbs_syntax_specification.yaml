@@ -1,0 +1,192 @@
+# MD-WBS Syntax Specification
+# Version: 6.2 (Reflecting refined scheduling logic and Excel integration details)
+# This document defines the precise syntax rules for creating MD-WBS files
+# to be processed by the associated PowerShell scripts.
+
+format_name: "Hierarchical ID-Prefixed Heading MD-WBS with Indented Listed Attributes"
+file_extension: ".md"
+recommended_encoding: "UTF-8" # UTF-8 No BOM is preferred for output files by scripts.
+
+# 1. Overall File Structure
+# The MD-WBS file consists of two main parts, in order:
+#   1.1. YAML Front Matter (Optional but Recommended)
+#   1.2. Markdown Body (WBS content)
+
+# 2. YAML Front Matter
+yaml_front_matter:
+  delimiters: "Enclosed by triple hyphens (---) at the very beginning of the file."
+  format: "Standard YAML key-value pairs."
+  parser_dependency_note: |
+    The md-wbs2gantt.ps1 script will attempt to use `ConvertFrom-Yaml` (available in PowerShell 7.3+
+    or via the 'powershell-yaml' module) to parse the YAML front matter. If `ConvertFrom-Yaml`
+    is unavailable, a basic internal key-value line parser will be used as a fallback.
+    This basic parser has limitations (e.g., no support for multi-line strings or complex
+    nested structures within the YAML values themselves).
+  supported_keys:
+    - key: "title"
+      type: "string"
+      required: false # Recommended
+      description: "The official title of the project. Used for Markwhen/Excel output."
+      example: "title: ServiceDev New Project (v6.1 - Final Spec)"
+    - key: "description"
+      type: "string"
+      required: false
+      description: "A brief description of the project (optional)."
+      example: "description: Development of the next-generation service, adhering to the final MD-WBS specification."
+    - key: "date"
+      type: "date (YYYY-MM-DD)"
+      required: false
+      description: "A reference date, such as document creation or last update (optional)."
+      example: "date: 2025-05-17"
+    - key: "projectstartdate"
+      type: "date (YYYY-MM-DD)"
+      required: false
+      description: |
+        The planned start date for the entire project (optional).
+        Used as a hint for display ranges and holiday filtering by processing scripts.
+      example: "projectstartdate: 2025-06-01"
+    - key: "projectoveralldeadline"
+      type: "date (YYYY-MM-DD)"
+      required: false
+      description: |
+        The final target deadline for the entire project (optional).
+        Used as a hint for display ranges by processing scripts.
+      example: "projectoveralldeadline: 2026-04-15"
+    - key: "view"
+      type: "string"
+      required: false
+      description: "Default view for Markwhen output (e.g., month, week, day) (optional)."
+      default_value_in_script: "month"
+      example: "view: week"
+    - key: "calculation_engine_default"
+      type: "string (backward | forward)"
+      required: false
+      description: |
+        プロジェクト全体で、タスクのスケジュール計算方法のデフォルトを指定します（任意）。
+        'backward': 逆線表（deadlineとdurationから開始日を計算）をデフォルトとします。
+        'forward':  順線表（start_date_fixedとdurationから終了日/deadlineを計算）をデフォルトとします。
+        個々のタスクで `start_date_fixed` が指定されていれば、それが優先されます。
+        指定がない場合のデフォルトは 'backward' (逆線表) となります。
+      example: "calculation_engine_default: forward"
+
+# 3. Markdown Body
+markdown_body:
+  general_rules:
+    - rule: "Blank lines are recommended before and after heading blocks, and before and after attribute list blocks, to improve readability and assist parsing."
+    - rule: "Markdown comment lines (lines starting with '#' that are not valid Markdown headings, e.g., `# This is a comment not a heading`) in the main body will generally be skipped by the parser. Comments within attribute values (after a ' #' on the same line) will be trimmed."
+
+  wbs_element_structure:
+    description: |
+      All WBS elements (Sections, Groups, Tasks, Sub-Tasks) are defined using Markdown headings.
+      Each WBS element consists of, in order:
+      1. A Markdown Heading Line (with a hierarchical ID).
+      2. An optional Attribute List (indented).
+      3. Optional Description Text (Markdown paragraphs that are not headings or attribute lists).
+    order_of_parts: "Heading Line, then (if any, and after an optional blank line) Attribute List, then (if any, and after an optional blank line) Description Text."
+
+    heading_line:
+      syntax: "MarkdownHeadingMarker HierarchicalID. ElementName"
+      markdown_heading_marker: "## (for Sections), ### (for Groups), #### (for Tasks), ##### (for Sub-Tasks), etc. Typically, level 1 (#) is reserved for the document title if not using YAML front matter title."
+      hierarchical_id:
+        format: "Dot-separated numbers, **without a trailing dot** (e.g., `1`, `1.1`, `1.1.1`)."
+        parser_handling: "The script will extract this ID. If a user accidentally includes a trailing dot, the parser should trim it to ensure consistency (e.g., '1.2.3.' becomes '1.2.3')."
+        uniqueness: "Must be unique within the entire MD-WBS document."
+      element_name: "The textual name of the WBS element. Follows the ID and a space."
+      example: |
+        ## 1. Main Section Title
+        ### 1.1. First Group
+        #### 1.1.1. Specific Task A
+
+    attribute_list:
+      placement: "Must immediately follow its parent heading line or after an optional blank line following the heading. It must appear before any multi-line description text for that element."
+      indentation: "**Must be indented by one level (e.g., 4 spaces or 1 tab) relative to its parent heading.** This is critical for parsing and Markmap compatibility."
+      format: "A Markdown unordered list where each item defines an attribute."
+      list_item_syntax: "- keyword: value"
+      keyword:
+        description: "A predefined, case-insensitive keyword followed by a colon and a space."
+        allowed_set:
+          - "deadline"
+          - "duration"
+          - "start_date_fixed" # 順線表計算の起点となる固定開始日。指定された場合、この日付からスケジュール計算を行う。
+          - "status"
+          - "progress"
+          - "org"
+          - "assignee"
+          - "depends"
+          - "calculation_preference" # 'forward' または 'backward' を指定し、タスク個別の計算方法を指定 (オプション)
+      value:
+        description: "The value associated with the keyword. Any text after a ' #' sequence on the same line is treated as a comment and will be ignored by the parser."
+        trimming: "Leading and trailing whitespace from the value (before any comment) will be trimmed by the parser."
+      example: |
+        #### 1.1.1. Task with Attributes
+            - id: 1.1.1 # IDは見出しに含まれるため、属性リストでは通常不要だが、補助的に記述も可（パーサーは無視する）
+              - deadline: 2025-12-31 # This is a comment for deadline
+            - duration: 5d # 実営業日数
+            # - start_date_fixed: 2025-12-01 # このタスクは指定日から開始 (順線表計算の起点)
+            # - calculation_preference: forward # 個別に順線表計算を明示 (start_date_fixed があれば通常不要)
+            - status: inprogress
+            - progress: 50%
+            - org: Development Team
+            - assignee: John Doe
+            - depends: 1.1.0 # Depends on another task
+
+    element_description_text:
+      description: |
+        Detailed textual descriptions or notes for any WBS element (Section, Group, Task)
+        can be written as standard Markdown paragraphs.
+      placement: "Must appear after the heading line and after its attribute list (if an attribute list exists). It is separated from the heading/attribute list by at least one blank line if attributes are present, or directly after the heading (with a blank line) if no attributes."
+      formatting: "Standard Markdown paragraph text. Multiple paragraphs (separated by blank lines) are supported. Should not be formatted as a Markdown heading or an attribute list item."
+      example: |
+        #### 1.1.2. Another Task
+            - deadline: 2026-01-15
+            - duration: 10d
+
+        This is a detailed description of 'Another Task'.
+        It can span multiple lines and include standard Markdown formatting like **bold** or *italics*.
+
+script_processing_rules:
+  id_handling: "The hierarchical ID from the heading line is the primary identifier. If an `id:` keyword is found in the attribute list, it should be ignored or used for validation only, with the heading ID taking precedence."
+  date_calculation_priority_for_tasks: |
+    PowerShellスクリプト (`md-wbs2gantt.ps1`) がタスクのスケジュール（開始日・終了日）を計算する際の属性の優先順位は以下の通りです。
+    これは、YAMLフロントマターの `calculation_engine_default` やタスク個別の `calculation_preference` 属性も考慮される可能性があります。
+
+    1.  **`start_date_fixed` と `duration` が両方有効な場合 (順線表計算):**
+        -   `CalculatedStartDate` = `start_date_fixed` の日付（祝日・週末でない直近の営業日に調整される場合がある）。
+        -   `CalculatedEndDate`   = `CalculatedStartDate` と `duration`（実営業日数）、および祝日リストに基づいて計算される。
+        -   この場合、もし `deadline` 属性も存在すれば、それは参考情報として扱われるか、計算結果との矛盾があれば警告対象となる。
+
+    2.  **`deadline` と `duration` が両方有効で、`start_date_fixed` が存在しない場合 (逆線表計算 - デフォルト動作):**
+        -   `CalculatedEndDate`   = `deadline` の日付（祝日・週末でない直近の営業日に調整される場合がある）。
+        -   `CalculatedStartDate` = `CalculatedEndDate` と `duration`（実営業日数）、および祝日リストに基づいて逆算される。
+
+    3.  **`deadline` のみ有効で、`duration` と `start_date_fixed` が存在しない場合:**
+        -   `duration` はデフォルト値（例: "1d"、スクリプト内で定義）として扱われ、上記2の逆線表計算が適用される。
+
+    4.  **`start_date_fixed` のみ有効で、`duration` と `deadline` が存在しない場合:**
+        -   `duration` はデフォルト値（例: "1d"）として扱われ、上記1の順線表計算が適用される。
+
+    5.  **`duration` のみ有効な場合、または上記以外の組み合わせで情報が不十分な場合:**
+        -   タスクのスケジュールは計算できず、警告が出力される。MarkwhenやExcelへの出力時には日付情報は空となるか、スキップされる。
+
+    **Excelからの変換時 (`excel2md-wbs.ps1`):**
+    ExcelのR列(開始入力), S列(終了入力), T列(日数入力-カレンダー日数) の組み合わせから、上記MD-WBS属性 (`deadline`, `duration`, `start_date_fixed`) を適切に導出し設定する。詳細は `01_requirements_definition.yaml` の `excel_integration.excel_to_md_wbs.date_interpretation_logic` を参照。
+
+  attribute_value_parsing:
+    comments: "For any attribute value, text after a ' #' sequence is a comment and is ignored."
+    depends_id_trimming: "For the `depends` attribute, any trailing dot in the ID value (e.g., '1.2.3.') is trimmed by the parser to '1.2.3'."
+  output_to_markwhen:
+    # (This section would reiterate how MD-WBS elements are mapped to Markwhen syntax,
+    #  as detailed in the md-wbs2gantt.ps1 design specification)
+    front_matter: "YAML front matter from MD-WBS (title, description, date, view) is output."
+    sections: "Level 2 MD-WBS headings -> `section Name ... endsection`."
+    groups: "Level 3+ MD-WBS headings -> nested `group \"Name\" ... endgroup`."
+    tasks: "Task-type WbsElementNodes -> `YYYY-MM-DD/YYYY-MM-DD: Name (Progress)% #ID_tag #Status_tag ...` の形式。日付区切りは'/'、期間区切りは'/'。"
+# (Progress の % の前のスペースはスクリプトの実装に合わせる)
+    notes: "DescriptionText -> `// note line`."
+    # ... etc.
+  output_to_excel:
+    # (This section would detail how MD-WBS elements map to specific Excel columns,
+    #  as defined in the md-wbs2gantt.ps1 design specification's Write-WbsToExcelCom function)
+    project_name_cell_d1: "From MD-WBS front matter 'title'."
+    overall_start_date_cell_o1: "Calculated or from MD-WBS front matter 'projectstartdate'."
+    # ... etc. for all relevant Excel columns ...

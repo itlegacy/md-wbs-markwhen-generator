@@ -619,7 +619,7 @@ try {
     if (-not $parsedResult) { Write-Error "MD-WBSファイル解析失敗。"; exit 1 }
     $projectMetadata = $parsedResult.ProjectMetadata
     $rootWbsElements = $parsedResult.RootElements
-    if ($rootWbsElements.Count -eq 0 -and (-not $projectMetadata -or ([string]::IsNullOrEmpty($projectMetadata.Title)) )) { Write-Error "MD-WBS有効データ無。"; exit 1 } 
+    if ($rootWbsElements.Count -eq 0 -and (-not $projectMetadata -or ([string]::IsNullOrEmpty($projectMetadata.Title)) )) { Write-Error "MD-WBS有効データ無。"; exit 1 }
 
     $script:AllTaskNodesFlatList = New-Object System.Collections.Generic.List[WbsElementNode]
     function Flatten-WbsTreeNodes { 

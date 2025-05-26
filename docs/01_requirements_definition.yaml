@@ -1,10 +1,18 @@
 # 要件定義書: プロジェクト管理ツール (WBS・ガントチャート) - 最終仕様案
 
 project_overview:
-  project_name: "ローカル環境向けプロジェクト管理手法の確立 (Markwhen特化・ID見出し化)"
-  objective: "社外秘情報を取り扱い可能なローカル環境にて、階層ID付き見出しと属性リストを用いたMD-WBSと、Markwhenの機能を活用した表現力豊かなガントチャート（タイムライン）を実現するプロジェクト管理手法を確立する。"
-  scope: "VS Codeを中心としたツール・拡張機能の組み合わせ、及びPowerShellスクリプトによるデータ連携を前提とした実現方法の検討と要件定義、及び基本仕様の策定。"
-  target_date_of_this_document: "2025-05-16" # 本日時点
+  project_name: "ローカル環境向けプロジェクト管理手法の確立 (Excel入力→MD-WBS構造化→Markwhen/Excel進捗管理)" # プロジェクト名をより具体的に
+  objective: |
+    Excelでの初期タスク入力と進捗管理の容易性を活かしつつ、MD-WBSによるテキストベースでの柔軟なタスク構造化・編集、
+    およびMarkwhenによる視覚的なスケジュール確認を実現するプロジェクト管理手法を確立する。
+    利用者はExcelで順線表または逆線表の意図でスケジュール情報を入力でき、PowerShellスクリプトがこれを解釈して
+    MD-WBSデータおよび各種出力形式に適切に反映することを目指す。
+  scope: |
+    Excel入力フォーマットの定義、MD-WBS記法の定義、PowerShellスクリプト (`excel2md-wbs.ps1`, `md-wbs2gantt.ps1`) の開発、
+    および関連ドキュメントの整備を含む。スクリプトは、Excelの入力パターンからスケジュールの計算意図（順線表/逆線表）を推定し、
+    MD-WBS属性（`deadline`, `duration`, `start_date_fixed`）に変換、さらにMarkwhenおよび進捗管理用Excelへの出力を自動化する。
+    Excelの行挿入・削除の弱点を補うため、MD-WBSでのタスクの追加・削除・構造変更を主要な編集手段と位置づける。
+  target_date_of_this_document: "2025-05-20" # 更新
 
 system_requirements:
   general:
@@ -15,9 +23,11 @@ system_requirements:
     - "Microsoft Visual Studio Code (VS Code) の利用を強く推奨する。"
     - "VS Code の機能拡張を積極的に活用する (例: Markmap用、Markwhen用)。"
   scripting_language:
-    - "PowerShell (バージョン 7.0 以上を推奨、YAML解析には7.3+が望ましい) をデータ連携および主要な自動処理に用いる。"
-  data_integration:
+    - "PowerShell (バージョン 7.3 以上を強く推奨) をデータ連携および主要な自動処理に用いる。YAML解析には標準の `ConvertFrom-Yaml` コマンドレットを利用する (PowerShell 7.3以降でネイティブサポート)。共通処理は `MyCommonFunctions` モジュールに分離。" # 更新
+    - "YAMLフロントマターのネイティブ解析のためにはバージョン 7.3以上、または 'powershell-yaml' モジュールの利用が望ましいが、簡易パーサーによるフォールバックも実装する。" # 追加
+  data_integration: # data_integrationセクションはscripting_languageの下に移動またはインデント調整が必要な場合がある
     - "PowerShellスクリプトによるMD-WBSのパースとMarkwhen形式への変換を行う。"
+    - "PowerShellスクリプトによるMD-WBSとExcelファイル間の双方向データ変換を行う。" # 追加
   programming_language_constraints:
     - "Python の利用は補助的に可能とする。"
     - "Python のパッケージインストーラ（Anaconda, pip 等）はセキュリティ上の理由により利用不可とする。標準ライブラリまたは手動配置可能なライブラリのみ利用可。"
@@ -38,12 +48,12 @@ functional_requirements:
       - key: "date"
         type: "date (YYYY-MM-DD)"
         description: "プロジェクト定義日やドキュメント作成日など、任意の参照日。"
-        example: "date: 2025-05-16"
-      - key: "projectstartdate" # キー名を小文字に統一推奨 (YAMLパーサーの挙動による)
+        example: "date: 2025-05-20" # 更新
+      - key: "projectstartdate"
         type: "date (YYYY-MM-DD)"
         description: "プロジェクトの計画開始日（任意、Markwhen表示や祝日フィルタの目安）。"
         example: "projectstartdate: 2025-06-01"
-      - key: "projectoveralldeadline" # キー名を小文字に統一推奨
+      - key: "projectoveralldeadline"
         type: "date (YYYY-MM-DD)"
         description: "プロジェクト全体の最終締切日（任意、Markwhen表示や祝日フィルタの目安）。"
         example: "projectoveralldeadline: 2026-04-15"
@@ -51,7 +61,7 @@ functional_requirements:
         type: "string"
         description: "Markwhenのデフォルト表示ビュー（例: month, week, day）（任意）。"
         example: "view: month"
-    handling: "PowerShellスクリプトは、このメタ情報を読み取り、Markwhenのフロントマターディレクティブ等に反映する。`ConvertFrom-Yaml`が利用できない場合は簡易的なキーバリューパースで対応する。"
+    handling: "PowerShellスクリプトは、このメタ情報を読み取り、Markwhenのフロントマターディレクティブ等に反映する。`ConvertFrom-Yaml` を使用する。" # 更新
 
   wbs_management:
     description: "作業分解構成図 (WBS) の効果的な管理とMarkwhenへのマッピング。"
@@ -81,13 +91,14 @@ functional_requirements:
           - "duration"    # タスク要素以外では通常指定不要または0d
           - "status"
           - "progress"    # タスク要素以外では通常指定不要
-          - "assignee"
+          - "assignee" # 担当者
+          - "start_date_fixed" # 順線表計算の起点となる固定開始日 (YYYY-MM-DD)。これが存在する場合、スケジュール計算で優先される。
           - "depends"     # 値は先行タスクの階層的ID (例: 1.1.1)。末尾のドットはパース時に除去。単一依存を推奨。
         description_handling:
           "要素の詳細な説明は、属性リストではなく、見出しの直後のMarkdown本文（通常の段落）として記述することを推奨する。スクリプトはこれをMarkwhenのノートとして関連付ける。"
         conversion_to_markwhen: |
           - PowerShellスクリプトは、各見出し要素（IDと要素名）とその属性リスト、および本文（説明）を読み取る。
-          - タスク要素の場合、[deadline]と[duration]から逆算した開始日(S)と、そこから期間を考慮した終了日(E)を求め、Markwhenのタイムラインエントリを `S/E: 要素名` の形式で生成。
+          - タスク要素の場合、[deadline]と[duration]から逆算した開始日(S)と、そこから期間を考慮した終了日(E)を求め、Markwhenのタイムラインエントリを `S/E: 要素名` の形式で生成。 (日付フォーマットは YYYY-MM-DD を推奨)
           - 見出し先頭の階層的IDを、Markwhenのタグとしてタイムラインエントリに追加 (例: `#1_1_1`のようにドットをアンダースコアに置換)。
           - [status]属性はMarkwhenのタグとしてタイムラインエントリに追加 (例: `#completed`)。
           - [progress]属性はタイムラインエントリの要素名に ` (進捗%)` の形で追記。
@@ -127,27 +138,166 @@ functional_requirements:
         name: "Markwhenでの祝日表示制御と専用セクション"
         details: "Markwhenに出力する祝日を、「全て表示」「プロジェクト期間内のみ表示」「表示しない」から選択できること。表示する場合、ファイルの最後に独立した `section 祝日` 内に `group Holidays` として出力する。"
     reverse_scheduling_support:
-      id: "GANTT-REVERSE-CALCULATION"
-      name: "逆線表による計画立案"
-      details: "MD-WBSで定義された締切日と所要営業日数から、PowerShellスクリプトが開始日と期間を考慮した終了日を自動算出する方式をサポートすること。"
-      requirements:
-        task_definition: "MD-WBSの要素属性リスト内の `deadline` および `duration` を使用する。"
-        date_calculation: "設定された締切日と所要営業日数から、土日及び指定された祝日を除外して開始日と終了日を自動算出できること。" # 「終了日」も明記
-        holiday_management:
-            description: "祝日リストを外部CSVファイルで管理し、逆算処理時に参照できること。"
-            file_handling: "法定休日CSVと会社独自の休日CSVを個別のパラメータで指定し、スクリプトがこれらをマージして処理する。"
-            csv_format:
-              column1_date: "日付。YYYY/M/D または YYYY-MM-DD 等、PowerShellの `[datetime]` 型で解釈可能な形式。"
-              column2_name: "祝日・休日名称（文字列）。"
-              header: "ヘッダ行の有無は許容する。スクリプトはヘッダを適切に処理できるように設計する（例: 1行目スキップと固定ヘッダ名割当）。"
-              encoding: "UTF-8 (推奨) または Shift_JIS。スクリプトはエンコーディングを適切に処理する (Shift_JISフォールバックなど)。"
-  dependency_management: # 新規セクション
+      # このセクションは schedule_calculation_logic に統合・詳細化されるため、内容はそちらに移行
+      id: "GANTT-SCHEDULE-CALCULATION" # ID変更
+      name: "柔軟なスケジュール計算（順線表・逆線表対応）"
+      details: "ユーザーの入力意図（Excel入力パターンやMD-WBS属性）に基づき、順線表または逆線表でスケジュールを計算する。"
+    schedule_calculation_logic: # ★新規追加セクション★
+      intent_capture_from_excel: "Excel入力時、R列(開始入力), S列(終了入力), T列(日数入力-カレンダー日数)の入力パターンに基づき、ユーザーのスケジュール計算意図（順線表/逆線表）を推定する (`excel2md-wbs.ps1` が担当)。"
+      md_wbs_attributes_for_scheduling:
+        - "`deadline` (YYYY-MM-DD): タスクの締切日。逆線表計算の主要入力。"
+        - "`duration` (Xd形式、実営業日数): タスクの所要実営業日数。休日を考慮した計算に使用。"
+        - "`start_date_fixed` (YYYY-MM-DD, 任意): タスクの固定開始日。これが存在する場合、順線表計算の起点として優先される。"
+      calculation_priority_in_md_wbs2gantt:
+        - "1. `start_date_fixed` と `duration` があれば、これらを基に順線表で開始日・終了日を計算。"
+        - "2. `start_date_fixed` がなく `deadline` と `duration` があれば、これらを基に逆線表で開始日・終了日を計算（デフォルトの動作）。"
+        - "3. 上記以外で情報が不十分な場合は警告を出し、可能な範囲で推定または日付未設定とする。"
+      default_assumption: "Excelからの入力解釈時およびMD-WBSからの計算時に、ユーザーの明確な意図が読み取れない場合は、逆線表（締切日から逆算）を基本の想定として処理を試みる。"
+      holiday_consideration: "PowerShellスクリプトによる日付計算では、指定された祝日リスト（公式・会社独自）と土日を考慮して実営業日数を扱う。"
+
+  dependency_management:
     description: "タスク間の依存関係の定義と検証。"
     definition_method: "MD-WBSのタスク属性リスト内で `depends: 先行タスクの階層的ID` の形式で定義する。"
     validation:
       id: "DEP-VALIDATE-WARNING"
       name: "依存関係の論理的矛盾の警告"
       details: "PowerShellスクリプトは、計算された各タスクの開始日と、その先行タスクの計算された終了日を比較し、後続タスクが先行タスクの終了日以前に開始する計画になっている場合に警告メッセージをコンソールに出力する。警告は計画の見直しを促すものであり、スケジュールの自動調整は行わない。"
+
+  excel_integration: # 新規セクション: Excel連携
+    description: |
+      Excelを初期タスク入力インターフェースおよび進捗管理ツールとして利用し、MD-WBSを中間的な構造化・編集レイヤーとして活用するための双方向データ連携。
+      Excelの行挿入・削除の弱点を考慮し、タスクの追加・削除・大幅な構造変更はMD-WBSで行うことを推奨する。
+    general_constraints:
+      - "Excelファイルの形式は .xlsx とする。"
+      - "PowerShellスクリプトはCOMオブジェクト (`Excel.Application`) を利用してExcel操作を行う。" # 更新
+      - "Microsoft Excelがローカル環境にインストールされていることを前提とする。" # 追加
+      - "Excelテンプレートは、条件書式を多用している場合があるため、PowerShellスクリプトからの出力は既存行への値の書き込みを基本とし、行全体の挿入・削除は極力避ける（またはユーザーに影響を通知する）。" # Excelの弱点への言及
+    md_wbs_to_excel:
+      id: "EXCEL-EXPORT-MDWBS"
+      name: "MD-WBSから進捗管理用Excelへのエクスポート"
+      details: "MD-WBSファイルの内容（計算済みスケジュール含む）を解析し、進捗管理に適した形式で既存のExcelファイルに出力する。"
+      output_structure:
+        project_metadata_sheet:
+          sheet_name: "ProjectInfo" (推奨)
+          content: "MD-WBSのYAMLフロントマター情報をキー・バリュー形式で格納する。"
+          columns: ["Key", "Value"]
+        wbs_data_sheet:
+          sheet_name: "WBS" # (推奨)
+          content: "WBSの各要素を1行としてフラットに表現する。進捗管理（X,Y,Z列への手入力）を主目的とする。"
+          columns: # ★★★ ユーザー提案のExcel列定義を反映 ★★★
+            - name: "A: タスクID"
+              source: "階層的ID"
+              script_output: "$Element.Id"
+            - name: "B: 大分類"
+              source: "Level 2 要素名"
+              script_output: "if ($Element.HierarchyLevel -eq 2) { $Element.Name }"
+            - name: "C: 中分類"
+              source: "Level 3 要素名"
+              script_output: "if ($Element.HierarchyLevel -eq 3) { $Element.Name }"
+            - name: "D: タスク名称"
+              source: "Level 4+ 要素名"
+              script_output: "if ($Element.HierarchyLevel -ge 4) { $Element.Name }"
+            - name: "E: 先行後続"
+              source: "先行タスクの有無を示す (例: '先行')"
+              script_output: "if ($Element.Attributes.depends) { '先行' } else { '' }"
+              notes: "後続タスクの表示は現時点ではスコープ外。"
+            - name: "F: 関連番号"
+              source: "先行タスクID"
+              script_output: "$Element.Attributes.depends"
+            - name: "G: 先行後続タスク名"
+              source: "先行タスクの名称"
+              script_output: "先行タスクの名称 (ルックアップ)"
+            - name: "H: 先行有無 (Excel計算式)"
+              script_output: "空白"
+            - name: "I: アクションプラン"
+              source: "MD-WBS Description"
+              script_output: "$Element.DescriptionText"
+            - name: "J-M: (Excel計算式)"
+              script_output: "空白"
+            - name: "N: 担当組織"
+              source: "MD-WBS org属性"
+              script_output: "$Element.Attributes.org"
+            - name: "O: 担当者"
+              source: "MD-WBS assignee属性"
+              script_output: "$Element.Attributes.assignee"
+            - name: "P: (未使用またはExcel計算式)"
+              script_output: "空白"
+            - name: "Q: 最終更新 (ユーザー手入力用)"
+              script_output: "空白"
+            - name: "R: 開始入力 (タスク開始可能日)"
+              source: "MD-WBS start_date_fixed属性 または 計算された開始日"
+              script_output: "$Element.Attributes.start_date_fixed (あれば優先) または $Element.CalculatedStartDate"
+              notes: "ユーザーがExcelで手動調整することを想定。"
+            - name: "S: 終了入力 (締切日)"
+              source: "MD-WBS deadline属性"
+              script_output: "$Element.Deadline"
+              notes: "ユーザーがExcelで手動調整することを想定。"
+            - name: "T: 日数入力 (カレンダー日数)"
+              source: "ユーザー手入力用。MD-WBSのduration(実営業日数)とは異なる。"
+              script_output: "空白"
+              notes: "MD-WBSのduration(実営業日数)は参考として別列(例:AA列)に出力することを検討。"
+            - name: "U: 開始計画 (Excel計算式)"
+              script_output: "空白"
+            - name: "V: 終了計画 (Excel計算式)"
+              script_output: "空白"
+            - name: "W: 日数計画 (Excel計算式 - カレンダー日数)"
+              script_output: "空白"
+            - name: "X: 進捗率 (0.0-1.0)"
+              source: "MD-WBS progress属性"
+              script_output: "$Element.Attributes.progress を数値に変換"
+            - name: "Y: 開始実績"
+              source: "ユーザー手入力 または status属性から導出"
+              script_output: "statusが'inprogress'または'completed'なら $Element.CalculatedStartDate (暫定)"
+            - name: "Z: 終了実績"
+              source: "ユーザー手入力 または status属性から導出"
+              script_output: "statusが'completed'なら $Element.CalculatedEndDate (暫定)"
+            - name: "AA: (参考) 実営業日数" # 参考情報として追加
+              source: "MD-WBS duration属性"
+              script_output: "$Element.DurationDays"
+      processing_logic:
+        - "PowerShellスクリプトはMD-WBSファイルをパースする (YAMLフロントマターとMarkdown本文)。"
+        - "プロジェクトメタデータを 'ProjectInfo' シートに書き出す。"
+        - "WBS階層をトラバースし、各要素を指定された列構成で 'WBS' シートに書き出す。その際、見出しレベルから要素のType (Section, Group, Task) を決定する。"
+        - "逆線表計算ロジックを適用し、StartDate_Calculated と EndDate_Calculated を算出する。"
+        - "R列にはMD-WBSの`start_date_fixed`（あれば）または計算された開始日を出力する。"
+        - "S列にはMD-WBSの`deadline`を出力する。"
+        - "T列（カレンダー日数）はユーザー入力用とし、スクリプトからは原則空白とする。MD-WBSの`duration`（実営業日数）は参考としてAA列など別列に出力する。"
+
+    excel_to_md_wbs:
+      id: "EXCEL-IMPORT-MDWBS"
+      name: "ExcelからMD-WBSへの初期データ取り込み/更新"
+      details: "Excelで初期入力されたタスク情報をMD-WBS形式に変換する。タスクの構造化や詳細編集はMD-WBSで行うことを推奨。"
+      input_structure:
+        project_metadata_sheet:
+          sheet_name: "ProjectInfo" (推奨)
+          content: "キー・バリュー形式のプロジェクトメタデータ。読み込まれてMD-WBSのYAMLフロントマターとなる。"
+        wbs_data_sheet:
+          sheet_name: "WBS" (推奨)
+          content: "各行がWBS要素を表すデータ。`md_wbs_to_excel` で出力される列構成を基本とする。"
+          required_columns_for_structure: ["A: タスクID", "B: 大分類", "C: 中分類", "D: タスク名称"] # 階層と見出しの復元に必須
+          date_interpretation_logic: # ★★★ ユーザー提案のExcel日付解釈ロジックを反映 ★★★
+            - "PowerShellスクリプト (`excel2md-wbs.ps1`) は、ExcelのR列(開始入力)、S列(終了入力)、T列(日数入力 - カレンダー日数)の入力状況を分析し、ユーザーのスケジュール計算意図を推定する。"
+            - "意図の推定とMD-WBS属性へのマッピング優先順位:"
+              - "1. **S列(終了入力)とT列(日数入力)が有効な場合（逆線表の意図）**: S列の日付をMD-WBSの `deadline` 属性とする。T列のカレンダー日数とS列の締切日から、祝日・土日を除いた実営業日数を計算し、MD-WBSの `duration` 属性とする。"
+              - "2. **R列(開始入力)とT列(日数入力)が有効な場合（順線表の意図）**: R列の日付をMD-WBSの `start_date_fixed` 属性とする。T列のカレンダー日数とR列の開始日から、祝日・土日を除いた実営業日数を計算し、MD-WBSの `duration` 属性とする。(この場合、`deadline` はスクリプト側で計算可能だが、MD-WBSには必須としないか、参考として付加)"
+              - "3. **R列(開始入力)とS列(終了入力)が有効な場合（期間固定の意図）**: S列の日付をMD-WBSの `deadline` 属性とする。R列とS列の日付から、祝日・土日を除いた実営業日数を計算し、MD-WBSの `duration` 属性とする。R列の日付は `start_date_fixed` の候補となる。"
+              - "4. **S列(終了入力)のみ有効な場合**: S列の日付をMD-WBSの `deadline` 属性とし、`duration` は `1d` (または設定されたデフォルト実営業日数) とする。"
+              - "5. **R列(開始入力)のみ有効な場合**: R列の日付をMD-WBSの `start_date_fixed` 属性とし、`duration` は `1d` (または設定されたデフォルト実営業日数) とする。"
+              - "6. **T列(日数入力)のみ有効な場合**: これは解釈が困難なため、警告を出し、MD-WBSの日付関連属性は設定しないか、プロジェクト開始日を仮の開始日として `duration` (実営業日数に変換が必要) を設定するなど限定的な処理とする。"
+            - "デフォルト解釈: 上記の明確なパターンに合致しない場合、または日付関連の入力が全くない場合は、**逆線表をデフォルトの想定とし**、可能であれば既存のMD-WBSファイルの締切日や期間情報を保持、または警告を出して日付属性を空にする。"
+          optional_attribute_columns: ["I: アクションプラン (Descriptionへ)", "N: 担当組織 (orgへ)", "O: 担当者 (assigneeへ)", "X: 進捗率 (progressへ)", "F: 関連番号 (dependsへ)", "Y: 開始実績 (status導出へ)", "Z: 終了実績 (status導出へ)"]
+      processing_logic:
+        - "PowerShellスクリプトはExcelファイルの 'ProjectInfo' シートからメタデータを読み込み、YAMLフロントマター文字列を構築する。"
+        - "'WBS' シートから各行のデータを読み込む。行の順序は維持される。"
+        - "`ID`, `Level`, `Name` 列を元に、Markdownの見出し (例: `## ID Name`, `### ID Name`) を生成する。"
+        - "各行の属性関連列 (Deadline, Durationなど) が存在し、かつ値があれば、それらをMarkdownの属性リスト (`- keyword: value`) として整形し、対応する見出しの下に追加する。"
+        - "`Description` 列の内容を見出し直後の本文として配置する。"
+        - "生成されたYAMLフロントマターとMarkdown本文を結合し、新しいMD-WBSファイルとして出力する。既存ファイルの上書きオプションや別名保存オプションを検討する。"
+      caveats:
+        - "Excelでの編集によりIDの階層構造や一意性が損なわれた場合、MD-WBSへの正確な復元が困難になる可能性がある。スクリプトは基本的な整合性チェックを試みるが、入力データの品質に依存する。"
+        - "Excelの `StartDate_Calculated`, `EndDate_Calculated` 列は、MD-WBS生成時には直接使用せず、主に `Deadline` と `Duration` から再計算されることを基本とする。ただし、Excel側でこれらの日付をMD-WBSの `deadline` や `duration` に反映させるための補助情報として利用するシナリオも考慮できる（例: `Deadline` が空で `EndDate_Calculated` があればそれを `deadline` とする等）。"
+        - "Excelの日付列は `YYYY-MM-DD` 形式を期待する。"
+
 
 non_functional_requirements:
   security:
@@ -161,10 +311,14 @@ non_functional_requirements:
     - id: "USE-TEXTEDIT-MDWBS"
       name: "直感的なMD-WBS編集"
       details: "MD-WBSのデータ修正は、Markdownの知識があれば平易なテキスト編集で行えること。"
+    - id: "USE-EXCEL-EDIT" #追加
+      name: "Excelでのデータ編集 (オプション)"
+      details: "Excelに慣れたユーザーは、エクスポートされたExcelファイルでWBSデータを編集し、再度MD-WBS形式にインポートできる (構造的制約の理解が必要)。"
   maintainability:
     - id: "MAINT-SCRIPT-READABLE"
       name: "スクリプトの保守性・可読性"
       details: "PowerShellスクリプトは、コメント、適切な命名規則、関数分割により可読性が高く、修正・拡張が比較的容易であること。"
+      # Pesterのようなテストフレームワークの本格導入は、関連ツールの安定性を見極めた上で将来検討する。現状は詳細な手動テストケースに基づく検証と、基本的なスクリプトによる確認を中心とする。
     - id: "MAINT-CONFIG-CSV"
       name: "設定ファイル(祝日CSV)の管理容易性"
       details: "祝日リストは人間が読み書きしやすいCSV形式。"
@@ -178,24 +332,34 @@ constraints_and_assumptions:
     details: "全データ処理・保存はローカル完結。"
   - id: "CONST-VSCODE-MAIN"
     details: "VS Codeを主要プラットフォームとする。"
-  - id: "CONST-POWERSHELL-VERSION"
-    details: "PowerShell 7.0 以上を推奨。YAMLフロントマターの厳密なパースにはPowerShell 7.3+またはpowershell-yamlモジュールが望ましいが、ない場合は簡易パースで対応。"
   - id: "CONST-PYTHON-AUXILIARY"
     details: "Python利用時は標準ライブラリまたは手動配置可能なライブラリのみ。"
+  - id: "CONST-EXCEL-MODULE" # 追加
+    details: "Excel連携機能はCOMオブジェクト (`Excel.Application`) を使用するため、Microsoft Excelがローカルにインストールされている必要がある。`ImportExcel` PowerShellモジュールは現状利用しない。" # 更新
+  - id: "CONST-POWERSHELL-VERSION-YAML" # ASSUMP-POWERSHELL-VERSION-YAML から名称変更し、制約として明確化
+    details: "YAMLフロントマターの厳密な解析にはPowerShell 7.3以上またはpowershell-yamlモジュールが必要。それ以前のバージョンでは簡易パーサーによるフォールバックが行われるため、YAMLの複雑な記述は制限される場合がある。"
   - id: "ASSUMP-MARKWHEN-INDENT"
     details: "生成するMarkwhenコードのインデントは、スペース4つを1レベルとして厳密に制御する。"
   - id: "ASSUMP-MDWBS-ATTR-INDENT"
     details: "MD-WBS内の属性リストは、親見出しに対して1段インデント（スペース4つ）されていることをパースの前提とする。"
-
+  - id: "ASSUMP-EXCEL-STRUCTURE" # 追加
+    details: "ExcelからMD-WBSへの変換時、Excelファイルが指定されたシート名と列構造 (特にID, Level, Name列) を持つことを前提とする。"
+  - id: "ASSUMP-LOCAL-FILESYSTEM-EXCEL" # ASSUMP-LOCAL-FILESYSTEM から名称変更し、Excel連携に特化
+    details: "Excel連携機能（COM経由）を安定して動作させるため、処理対象および出力先のExcelファイルはローカルの非同期フォルダ（例: C:\Temp）に配置することを推奨する。OneDrive同期フォルダなどでの動作は環境により不安定になる可能性がある。"
 deliverables_of_the_established_methodology:
   - "MD-WBS (ID見出し化・属性リスト形式) のテンプレートファイル"
   - "祝日リスト用CSVファイルのサンプルおよびフォーマット説明"
-  - "PowerShellスクリプト (`md-wbs2gantt.ps1` または `md-wbs2markwhen.ps1`)"
-  - "利用手順書（セットアップ方法、MD-WBS記述方法、スクリプト実行方法、依存関係警告の解釈などを含む）"
+  - "PowerShellスクリプト: `md-wbs2gantt.ps1` (MD-WBSからMarkwhen形式への変換)、`excel2md-wbs.ps1` (ExcelからMD-WBS形式への変換、およびMD-WBSからExcel形式へのエクスポート機能を含む)" # 更新
+  - "PowerShellモジュール: 共通関数 (`MyCommonFunctions.psm1`, `MyCommonFunctions.psd1`)" # 更新
+  - "Excelエクスポート用テンプレートの構造説明 (またはサンプル .xlsx ファイル)" # 追加
+  - "利用手順書（セットアップ方法、MD-WBS記述方法、Excel連携方法、スクリプト実行方法、依存関係警告の解釈、既知の問題点などを含む）" # 更新
+  - "手動テストケース一覧および実行手順書" # 追加
+  - "PowerShellコーディングスタンダード (`docs/91_coding_standards.md`)" # 追加
 
 metadata:
-  document_version: "4.0" # 最新仕様反映
-  creation_date: "2025-05-16"
-  created_by: "AI Assistant (Gemini)"
+  document_version: "4.1" # 更新 (Excel連携機能追加のため)
+  creation_date: "2025-05-20" # 更新
+  created_by: "AI Assistant (Gemini) with User Guidance" # 更新
   based_on_discussion_with_user: true
   status: "Final Draft"
+---
